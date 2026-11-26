@@ -24,16 +24,21 @@ La barra superior reúne **Seleccionar**, **Rectángulo**, **Flecha** y **Texto*
 
 Las imágenes son las maquetas iniciales del flujo y usan contenido de ejemplo.
 
-## Versión de prueba con atajo y línea
+## Versión de escritorio para Windows
 
-En Windows 10 (versión 1703 o posterior) o Windows 11, abre `Iniciar-Capture.cmd` desde el Explorador. Capture queda disponible en el área de notificación, junto al reloj. Usa Windows PowerShell 5.1 y Windows Forms, incluidos en Windows. El lanzador aplica la política de ejecución solo a su proceso.
+Capture se ejecuta con `Capture.exe` desde una carpeta descomprimida. Usa C# 5, Windows Forms y .NET Framework 4.8, incluido en Windows 11 y en las versiones recientes de Windows 10.
 
-- Abre la aplicación o el escritorio que quieras capturar y pulsa **Ctrl+Alt+R**. También puedes abrir el menú del icono de Capture y elegir **Nueva captura**, incluso si otra aplicación ya está usando el atajo. Si el icono está oculto, despliega la flecha junto al reloj.
-- Arrastra para seleccionar un área y ajusta sus bordes con los tiradores. Confirma con **Capturar** o **Intro**. **Esc** cancela.
-- Para dibujar una **Flecha**, pulsa donde debe empezar y arrastra hasta el punto al que debe señalar. El trazo y la punta se dibujan juntos. **Línea** usa el mismo gesto y dibuja un segmento sin punta.
-- Al terminar, el editor vuelve a **Seleccionar**. En una línea o flecha seleccionada, arrastra cualquiera de los dos tiradores para cambiar el ángulo o la longitud. Arrastra el cuerpo para mover la anotación entera. También puedes añadir un **Rectángulo** o **Texto**, cambiar colores, ajustar el grosor de las formas y eliminar anotaciones.
-- **Copiar** lleva la imagen anotada al portapapeles. **Guardar** genera un PNG con las dimensiones del recorte.
-- **Nueva captura** también está disponible en el editor. Al cancelar el recorte, vuelve la captura anterior. Capture pide confirmación si vas a descartar cambios de anotación que todavía no has copiado ni guardado.
-- Para cerrar el programa y liberar el atajo, elige **Salir** en el menú del icono junto al reloj.
+1. **Captura.** Abre la ventana que quieras recortar y pulsa **Ctrl+Alt+R**. También puedes usar **Nueva captura** en Capture o en el menú de su icono junto al reloj. Arrastra para elegir la zona, ajusta los bordes y confirma con **Capturar** o **Intro**. Pulsa **Esc** para cancelar.
+2. **Flecha.** Selecciona **Flecha**, pulsa donde debe quedar su punta y arrastra para extender la línea. **Línea** dibuja un segmento sin punta. Puedes arrastrar sus extremos después de dibujarlas y ajustar el color y el grosor.
+3. **Comparte.** Usa **Copiar** para llevar la imagen al portapapeles o **Guardar PNG** para escribirla en un archivo. Puedes añadir también rectángulos y texto.
+4. **Cierra.** La **X** de Capture y **Salir** en el área de notificación cierran el proceso y liberan el atajo. Después puedes borrar la carpeta descomprimida. Minimizar la ventana deja el atajo disponible.
 
-En esta iteración el texto se añade en una sola línea y el lienzo ajusta la imagen al espacio disponible. La prueba de pantalla, escalado, portapapeles y guardado requiere una sesión gráfica de Windows.
+Para actualizar, cierra la versión anterior con **Salir** desde su icono junto al reloj. Descomprime la nueva entrega en otra carpeta. Tus imágenes PNG siguen en la ubicación donde las guardaste. Para volver a una entrega anterior, cierra la nueva y abre la anterior desde su carpeta.
+
+### Compilar desde el código
+
+Ejecuta este comando en `cmd.exe` desde la raíz del repositorio, con .NET Framework 4.8. Compila un ejecutable de interfaz gráfica e incorpora el icono y el manifiesto de DPI.
+
+```bat
+"%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /langversion:5 /codepage:65001 /optimize+ /target:winexe /out:Capture.exe /win32icon:src\Capture.ico /win32manifest:src\Capture.manifest /reference:System.Windows.Forms.dll,System.Drawing.dll src\*.cs
+```

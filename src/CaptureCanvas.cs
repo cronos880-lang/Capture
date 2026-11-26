@@ -1,0 +1,419 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Windows.Forms;
+
+namespace Capture
+{
+    sealed class CaptureCanvas : Control
+    {
+        enum Endpoint { Body, Start, End }
+
+        sealed class Drag
+        {
+            public Point Pointer, Start, End;
+            public Endpoint Part;
+            public bool Creating;
+        }
+
+        readonly List<Annotation> annotations = new List<Annotation>();
+        readonly Font annotationFont = new Font("Segoe UI", 22, FontStyle.Regular, GraphicsUnit.Pixel);
+        readonly Font emptyFont = new Font("Segoe UI", 14, FontStyle.Regular, GraphicsUnit.Point);
+        Bitmap image;
+        Drag drag;
+        public Tool ActiveTool { get; private set; }
+        public Annotation Selected { get; private set; }
+        public bool Modified { get; private set; }
+        public bool IsDragging { get { return drag != null; } }
+        public bool HasImage { get { return image != null; } }
+        public Size ImageSize { get { return image == null ? Size.Empty : image.Size; } }
+        public event EventHandler StateChanged;
+        public event EventHandler EmptyClicked;
+
+        public CaptureCanvas()
+        {
+            BackColor = Theme.Surface;
+            AccessibleName = "Lienzo de captura";
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+            TabStop = true;
+        }
+
+        public void SetImage(Bitmap bitmap)
+        {
+            if (image != null) image.Dispose();
+            image = bitmap;
+            annotations.Clear();
+            Selected = null;
+            ActiveTool = Tool.Select;
+            Modified = false;
+            drag = null;
+            Changed();
+        }
+
+        public void ChooseTool(Tool tool)
+        {
+            if (drag != null) CancelDrag();
+            ActiveTool = tool;
+            Selected = null;
+            Changed();
+        }
+
+        void Changed()
+        {
+            Cursor = !HasImage ? Cursors.Hand : ActiveTool == Tool.Select ? Cursors.Default : Cursors.Cross;
+            Invalidate();
+            var handler = StateChanged;
+            if (handler != null) handler(this, EventArgs.Empty);
+        }
+
+        public void SetSelectedColor(Color color)
+        {
+            if (Selected == null || color == Selected.Color) return;
+            Selected.Color = color;
+            Modified = true;
+            Changed();
+        }
+
+        public void SetSelectedWidth(int width)
+        {
+            if (Selected == null || width == Selected.Width) return;
+            Selected.Width = width;
+            Modified = true;
+            Changed();
+        }
+
+        public void DeleteSelected()
+        {
+            if (drag != null || Selected == null) return;
+            annotations.Remove(Selected);
+            Selected = null;
+            Modified = true;
+            Changed();
+        }
+
+        public void MarkExported() { Modified = false; }
+
+        public Bitmap RenderImage()
+        {
+            var output = new Bitmap(image.Width, image.Height, PixelFormat.Format32bppRgb);
+            try
+            {
+                using (var graphics = Graphics.FromImage(output))
+                {
+                    graphics.DrawImageUnscaled(image, 0, 0);
+                    DrawAnnotations(graphics);
+                }
+                return output;
+            }
+            catch { output.Dispose(); throw; }
+        }
+
+        void DrawAnnotations(Graphics graphics)
+        {
+            graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            foreach (var annotation in annotations) annotation.Draw(graphics, annotationFont);
+        }
+
+        RectangleF View()
+        {
+            const int padding = 17;
+            float scale = Math.Min(1, Math.Min((ClientSize.Width - padding * 2) / (float)image.Width,
+                (ClientSize.Height - padding * 2) / (float)image.Height));
+            if (scale <= 0) return RectangleF.Empty;
+            return new RectangleF((ClientSize.Width - image.Width * scale) * 0.5f,
+                (ClientSize.Height - image.Height * scale) * 0.5f, image.Width * scale, image.Height * scale);
+        }
+
+        Point ImagePoint(Point location, RectangleF view)
+        {
+            float scale = view.Width / image.Width;
+            return new Point((int)Math.Floor((location.X - view.Left) / scale),
+                (int)Math.Floor((location.Y - view.Top) / scale));
+        }
+
+        RectangleF HandleBox(Point p, RectangleF view)
+        {
+            float scale = view.Width / image.Width;
+            float side = Math.Max(9, 9 * DeviceDpi / 96.0f);
+            return new RectangleF(view.Left + p.X * scale - side / 2, view.Top + p.Y * scale - side / 2, side, side);
+        }
+
+        static double HandleDistance(RectangleF box, Point p)
+        {
+            if (!box.Contains(p)) return double.PositiveInfinity;
+            double dx = p.X - box.Left - box.Width / 2, dy = p.Y - box.Top - box.Height / 2;
+            return dx * dx + dy * dy;
+        }
+
+        Endpoint PickEndpoint(Point p, RectangleF view)
+        {
+            if (Selected == null || !Selected.IsSegment) return Endpoint.Body;
+            double start = HandleDistance(HandleBox(Selected.Start, view), p);
+            double end = HandleDistance(HandleBox(Selected.End, view), p);
+            if (double.IsPositiveInfinity(Math.Min(start, end))) return Endpoint.Body;
+            return end <= start ? Endpoint.End : Endpoint.Start;
+        }
+
+        RectangleF TextBounds(Annotation annotation)
+        {
+            if (annotation.Kind != Tool.Text) return RectangleF.Empty;
+            return new RectangleF(annotation.Start, TextRenderer.MeasureText(annotation.Text, annotationFont));
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            var g = e.Graphics;
+            if (!HasImage)
+            {
+                TextRenderer.DrawText(g, "Selecciona una zona de la pantalla", emptyFont, ClientRectangle,
+                    Theme.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                return;
+            }
+
+            var view = View();
+            if (view.IsEmpty) return;
+            using (var pen = new Pen(Theme.Border)) g.DrawRectangle(pen, view.X - 1, view.Y - 1, view.Width + 2, view.Height + 2);
+
+            GraphicsState saved = g.Save();
+            g.SetClip(view);
+            g.TranslateTransform(view.Left, view.Top);
+            float ratio = view.Width / image.Width;
+            g.ScaleTransform(ratio, ratio);
+            g.InterpolationMode = ratio < 1 ? InterpolationMode.HighQualityBicubic : InterpolationMode.NearestNeighbor;
+            g.DrawImage(image, 0, 0, image.Width, image.Height);
+            DrawAnnotations(g);
+
+            if (Selected != null && !Selected.IsSegment)
+            {
+                RectangleF bounds = Selected.Kind == Tool.Text ? TextBounds(Selected) : Selected.Bounds;
+                bounds.Inflate(4 / ratio, 4 / ratio);
+                using (var pen = new Pen(Theme.Blue, 1 / ratio) { DashStyle = DashStyle.Dash })
+                    g.DrawRectangle(pen, bounds.X, bounds.Y, bounds.Width, bounds.Height);
+            }
+            g.Restore(saved);
+
+            if (Selected != null && Selected.IsSegment && drag == null)
+            {
+                using (var pen = new Pen(Theme.Blue, 1.5f))
+                {
+                    DrawHandle(g, HandleBox(Selected.Start, view), pen);
+                    DrawHandle(g, HandleBox(Selected.End, view), pen);
+                }
+            }
+        }
+
+        static void DrawHandle(Graphics g, RectangleF box, Pen pen)
+        {
+            g.FillRectangle(Brushes.White, box);
+            g.DrawRectangle(pen, box.X, box.Y, box.Width, box.Height);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left || drag != null) return;
+            if (!HasImage)
+            {
+                var handler = EmptyClicked;
+                if (handler != null) handler(this, EventArgs.Empty);
+                return;
+            }
+            Focus();
+
+            var view = View();
+            if (view.IsEmpty) return;
+            Point pixel = ImagePoint(e.Location, view);
+
+            if (ActiveTool == Tool.Select)
+            {
+                Endpoint endpoint = PickEndpoint(e.Location, view);
+                if (endpoint != Endpoint.Body)
+                {
+                    StartDrag(pixel, endpoint, false);
+                    return;
+                }
+                Selected = null;
+                float tolerance = Math.Max(5, 5 / (view.Width / image.Width));
+                if (view.Contains(e.Location))
+                    for (int i = annotations.Count - 1; i >= 0; i--)
+                    {
+                        var item = annotations[i];
+                        if (!item.Hit(pixel, TextBounds(item), tolerance + item.Width / 2.0f)) continue;
+                        Selected = item;
+                        StartDrag(pixel, Endpoint.Body, false);
+                        return;
+                    }
+                Changed();
+            }
+            else if (view.Contains(e.Location))
+            {
+                var color = ActiveTool == Tool.Arrow ? Color.FromArgb(209, 74, 19) : Theme.Blue;
+                var item = Annotation.StartAt(ActiveTool, pixel, color);
+                if (ActiveTool == Tool.Text)
+                {
+                    item.Text = PromptForText();
+                    if (!item.Valid) return;
+                    annotations.Add(item);
+                    Selected = item;
+                    ActiveTool = Tool.Select;
+                    Modified = true;
+                    Changed();
+                }
+                else
+                {
+                    annotations.Add(item);
+                    Selected = item;
+                    StartDrag(pixel, Endpoint.End, true);
+                }
+            }
+        }
+
+        void StartDrag(Point pointer, Endpoint endpoint, bool creating)
+        {
+            drag = new Drag { Pointer = pointer, Start = Selected.Start, End = Selected.End, Part = endpoint, Creating = creating };
+            Capture = true;
+            Changed();
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            if (drag != null) MoveDrag(e.Location);
+            else if (HasImage && ActiveTool == Tool.Select)
+            {
+                var view = View();
+                Cursor = !view.IsEmpty && PickEndpoint(e.Location, view) != Endpoint.Body ? Cursors.Hand : Cursors.Default;
+            }
+        }
+
+        void MoveDrag(Point location)
+        {
+            var view = View();
+            if (view.IsEmpty) return;
+            Point point = ImagePoint(location, view);
+            int dx = point.X - drag.Pointer.X, dy = point.Y - drag.Pointer.Y;
+            switch (drag.Part)
+            {
+                case Endpoint.Start:
+                    Selected.Start = Clamp(new Point(drag.Start.X + dx, drag.Start.Y + dy));
+                    break;
+                case Endpoint.End:
+                    Selected.End = Clamp(new Point(drag.End.X + dx, drag.End.Y + dy));
+                    break;
+                default:
+                    var original = Geometry.Between(drag.Start, drag.End);
+                    int width = Math.Max(1, original.Width + 1), height = Math.Max(1, original.Height + 1);
+                    if (Selected.Kind == Tool.Text)
+                    {
+                        RectangleF bounds = TextBounds(Selected);
+                        width = (int)Math.Ceiling(bounds.Width);
+                        height = (int)Math.Ceiling(bounds.Height);
+                    }
+                    dx = Geometry.Clamp(dx, -original.Left, Math.Max(-original.Left, image.Width - original.Left - width));
+                    dy = Geometry.Clamp(dy, -original.Top, Math.Max(-original.Top, image.Height - original.Top - height));
+                    Selected.Start = new Point(drag.Start.X + dx, drag.Start.Y + dy);
+                    Selected.End = new Point(drag.End.X + dx, drag.End.Y + dy);
+                    break;
+            }
+            Invalidate();
+        }
+
+        Point Clamp(Point p)
+        {
+            return new Point(Geometry.Clamp(p.X, 0, image.Width - 1), Geometry.Clamp(p.Y, 0, image.Height - 1));
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (drag == null || e.Button != MouseButtons.Left) return;
+            MoveDrag(e.Location);
+            CompleteDrag(true);
+        }
+
+        protected override void OnMouseCaptureChanged(EventArgs e)
+        {
+            base.OnMouseCaptureChanged(e);
+            if (drag != null && !Capture) CompleteDrag(false);
+        }
+
+        public void CancelDrag()
+        {
+            if (drag != null) CompleteDrag(false);
+        }
+
+        void CompleteDrag(bool commit)
+        {
+            var previous = drag;
+            drag = null;
+            if (!commit || !Selected.Valid)
+            {
+                if (previous.Creating)
+                {
+                    annotations.Remove(Selected);
+                    Selected = null;
+                }
+                else
+                {
+                    Selected.Start = previous.Start;
+                    Selected.End = previous.End;
+                }
+            }
+            else if (previous.Creating || previous.Start != Selected.Start || previous.End != Selected.End) Modified = true;
+            if (previous.Creating) ActiveTool = Tool.Select;
+            Capture = false;
+            Changed();
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            base.OnKeyDown(e);
+            if (e.KeyCode == Keys.Delete && drag == null)
+            {
+                DeleteSelected();
+                e.Handled = true;
+            }
+        }
+
+        string PromptForText()
+        {
+            using (var dialog = new Form
+            {
+                Text = "Añadir texto", StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog, ShowInTaskbar = false, MaximizeBox = false,
+                MinimizeBox = false, ClientSize = new Size(350, 95), Font = Font, Padding = new Padding(12)
+            })
+            {
+                var input = new TextBox { Dock = DockStyle.Top, AccessibleName = "Texto de la anotación" };
+                var add = Theme.Button("Añadir", true);
+                add.DialogResult = DialogResult.OK;
+                var cancel = Theme.Button("Cancelar");
+                cancel.DialogResult = DialogResult.Cancel;
+                var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 35, FlowDirection = FlowDirection.RightToLeft };
+                buttons.Controls.Add(add);
+                buttons.Controls.Add(cancel);
+                dialog.Controls.Add(input);
+                dialog.Controls.Add(buttons);
+                dialog.AcceptButton = add;
+                dialog.CancelButton = cancel;
+                dialog.ActiveControl = input;
+                return dialog.ShowDialog(FindForm()) == DialogResult.OK ? input.Text.Trim() : null;
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (image != null) { image.Dispose(); image = null; }
+                annotationFont.Dispose();
+                emptyFont.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+    }
+}
