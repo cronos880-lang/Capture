@@ -11,27 +11,31 @@ namespace Capture
     static class Program
     {
         [STAThread]
-        static void Main()
+        static void Main(string[] arguments)
         {
             Directory.SetCurrentDirectory(Path.GetTempPath());
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
+            var launch = LaunchMode.Parse(arguments);
             bool firstInstance;
+            using (var captureRequested = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\Capture.Windows.Recortar"))
             using (var instance = new Mutex(true, @"Local\Capture.Windows.Desktop", out firstInstance))
             {
                 if (!firstInstance)
                 {
-                    MessageBox.Show("Capture ya está abierto. Pulsa Ctrl+Alt+R o usa su icono junto al reloj.",
-                        "Capture", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    if (launch.ForwardIfRunning) captureRequested.Set();
                     return;
                 }
 
                 try
                 {
                     using (var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath))
-                    using (var app = new CaptureApplication(icon ?? SystemIcons.Application))
+                    using (var app = new CaptureApplication(icon ?? SystemIcons.Application, captureRequested))
+                    {
+                        if (launch.CaptureOnStart) captureRequested.Set();
                         Application.Run(app);
+                    }
                 }
                 catch (Exception error)
                 {
@@ -50,11 +54,12 @@ namespace Capture
         readonly ContextMenuStrip menu;
         readonly CaptureHotKey hotKey;
         readonly System.Windows.Forms.Timer captureTimer;
+        readonly RegisteredWaitHandle activationWait;
         RegionSelector selector;
         bool restoreEditor;
         bool finishingCapture;
 
-        public CaptureApplication(Icon icon)
+        public CaptureApplication(Icon icon, EventWaitHandle captureRequested)
         {
             editor = new EditorForm(icon);
             editor.CaptureRequested += RequestCapture;
@@ -72,7 +77,17 @@ namespace Capture
                 ((ToolStripMenuItem)captureItem).ShortcutKeyDisplayString = "Ctrl+Alt+R";
             var open = menu.Items.Add("Abrir editor");
             open.Click += delegate { if (!Busy) ShowEditor(true); };
-            menu.Opening += delegate { open.Available = editor.HasCapture; };
+            menu.Items.Add(new ToolStripSeparator());
+            var startup = new ToolStripMenuItem("Iniciar con Windows");
+            startup.Click += delegate { if (!Busy) ToggleStartup(startup); };
+            menu.Items.Add(startup);
+            menu.Items.Add("Preparar acceso para anclar…").Click += delegate { if (!Busy) PrepareTaskbarShortcut(); };
+            menu.Opening += delegate
+            {
+                open.Available = editor.HasCapture;
+                startup.Checked = WindowsShortcuts.StartsWithWindows;
+            };
+            menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Salir").Click += delegate
             {
                 if (Busy) return;
@@ -89,9 +104,40 @@ namespace Capture
                 else RequestCapture(this, EventArgs.Empty);
             };
             editor.SetShortcutAvailable(hotKey.Registered);
+            activationWait = ThreadPool.RegisterWaitForSingleObject(captureRequested,
+                delegate { hotKey.PostCaptureRequest(); }, null, Timeout.Infinite, false);
         }
 
         bool Busy { get { return selector != null || captureTimer.Enabled || finishingCapture; } }
+
+        void ToggleStartup(ToolStripMenuItem item)
+        {
+            try
+            {
+                WindowsShortcuts.SetStartup(!WindowsShortcuts.StartsWithWindows);
+                item.Checked = WindowsShortcuts.StartsWithWindows;
+            }
+            catch (Exception error)
+            {
+                MessageBox.Show("No se pudo cambiar el inicio automático. " + error.Message, "Capture",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        static void PrepareTaskbarShortcut()
+        {
+            try
+            {
+                WindowsShortcuts.CreateStartMenuShortcut();
+                MessageBox.Show("Busca Capture en Inicio. Pulsa con el botón derecho sobre Capture y elige «Anclar a la barra de tareas». Si aparece el menú «Más», está dentro de ese menú.",
+                    "Anclar Capture", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception error)
+            {
+                MessageBox.Show("No se pudo crear el acceso de Inicio. " + error.Message, "Capture",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
 
         void RequestCapture(object sender, EventArgs e)
         {
@@ -196,6 +242,8 @@ namespace Capture
         {
             if (disposing)
             {
+                using (var callbacksFinished = new ManualResetEvent(false))
+                    if (activationWait.Unregister(callbacksFinished)) callbacksFinished.WaitOne();
                 captureTimer.Dispose();
                 tray.Dispose();
                 menu.Dispose();
@@ -230,6 +278,7 @@ namespace Capture
     {
         const int Id = 1;
         const int HotKeyMessage = 0x0312;
+        const int CaptureRequestMessage = 0x8001; // WM_APP + 1
         const uint CtrlAltNoRepeat = 0x4003;
         public event EventHandler Pressed;
         public bool Registered { get; private set; }
@@ -242,13 +291,18 @@ namespace Capture
 
         protected override void WndProc(ref Message m)
         {
-            if (m.Msg == HotKeyMessage && m.WParam.ToInt32() == Id)
+            if (m.Msg == CaptureRequestMessage || (m.Msg == HotKeyMessage && m.WParam.ToInt32() == Id))
             {
                 var handler = Pressed;
                 if (handler != null) handler(this, EventArgs.Empty);
                 return;
             }
             base.WndProc(ref m);
+        }
+
+        public void PostCaptureRequest()
+        {
+            PostMessage(Handle, CaptureRequestMessage, IntPtr.Zero, IntPtr.Zero);
         }
 
         public void Dispose()
@@ -266,5 +320,9 @@ namespace Capture
 
         [DllImport("user32.dll")]
         static extern bool UnregisterHotKey(IntPtr window, int id);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool PostMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     }
 }

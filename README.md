@@ -37,6 +37,15 @@ Para actualizar, cierra la versión anterior con **Salir** desde su icono junto 
 
 Si Windows mantiene bloqueadas las carpetas `Capture-atajo-y-linea` o `Capture-recorte-y-trazos`, guarda las anotaciones abiertas y ejecuta `Liberar-carpetas-Capture.cmd` incluido en la entrega. El comando cierra los procesos de esas dos versiones en tu sesión. Después puedes borrar las carpetas desde el Explorador.
 
+### Inicio automático y barra de tareas
+
+Deja `Capture.exe` en la carpeta donde quieras conservarlo y ábrelo una vez. Haz clic derecho en su icono junto al reloj.
+
+- Marca **Iniciar con Windows** para que Capture quede disponible en segundo plano al iniciar sesión. Pulsa de nuevo la misma opción para quitar el inicio automático.
+- Elige **Preparar acceso para anclar…**. En el menú **Inicio**, busca **Capture**, pulsa con el botón derecho y elige **Anclar a la barra de tareas**. En algunas versiones de Windows la opción está dentro de **Más**.
+
+Si Capture está solo junto al reloj, el acceso anclado abre el selector. Puedes seguir usando **Ctrl+Alt+R**. Si vas a mover la carpeta, quita primero el inicio automático y el anclaje. Vuelve a configurarlos desde la nueva ubicación.
+
 ### Compilar desde el código
 
 Ejecuta este comando en `cmd.exe` desde la raíz del repositorio, con .NET Framework 4.8. Compila un ejecutable de interfaz gráfica e incorpora el icono y el manifiesto de DPI.
