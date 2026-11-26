@@ -52,7 +52,7 @@ namespace Capture
 
         public CaptureCanvas()
         {
-            BackColor = Theme.Surface;
+            BackColor = Theme.Background;
             AccessibleName = "Lienzo de captura";
             SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
                 ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
@@ -130,12 +130,7 @@ namespace Capture
 
         RectangleF View()
         {
-            const int padding = 17;
-            float scale = Math.Min(1, Math.Min((ClientSize.Width - padding * 2) / (float)image.Width,
-                (ClientSize.Height - padding * 2) / (float)image.Height));
-            if (scale <= 0) return RectangleF.Empty;
-            return new RectangleF((ClientSize.Width - image.Width * scale) * 0.5f,
-                (ClientSize.Height - image.Height * scale) * 0.5f, image.Width * scale, image.Height * scale);
+            return Geometry.Fit(image.Size, ClientSize, 8 * DeviceDpi / 96);
         }
 
         Point ImagePoint(Point location, RectangleF view)
@@ -216,7 +211,7 @@ namespace Capture
             g.TranslateTransform(view.Left, view.Top);
             float ratio = view.Width / image.Width;
             g.ScaleTransform(ratio, ratio);
-            g.InterpolationMode = ratio < 1 ? InterpolationMode.HighQualityBicubic : InterpolationMode.NearestNeighbor;
+            g.InterpolationMode = ratio == 1 ? InterpolationMode.NearestNeighbor : InterpolationMode.HighQualityBicubic;
             g.DrawImage(image, 0, 0, image.Width, image.Height);
             DrawAnnotations(g);
 
@@ -224,14 +219,14 @@ namespace Capture
             {
                 RectangleF bounds = TextBounds(Selected);
                 bounds.Inflate(4 / ratio, 4 / ratio);
-                using (var pen = new Pen(Theme.Blue, 1 / ratio) { DashStyle = DashStyle.Dash })
+                using (var pen = new Pen(Theme.Accent, 1 / ratio) { DashStyle = DashStyle.Dash })
                     g.DrawRectangle(pen, bounds.X, bounds.Y, bounds.Width, bounds.Height);
             }
             g.Restore(saved);
 
             if (Selected != null && drag == null)
             {
-                using (var pen = new Pen(Theme.Blue, 1.5f))
+                using (var pen = new Pen(Theme.Primary, 1.5f))
                 {
                     if (Selected.IsSegment)
                     {
@@ -282,7 +277,7 @@ namespace Capture
                     return;
                 }
                 Selected = null;
-                float tolerance = Math.Max(5, 5 / (view.Width / image.Width));
+                float tolerance = 5 * image.Width / view.Width;
                 if (view.Contains(e.Location))
                     for (int i = annotations.Count - 1; i >= 0; i--)
                     {
@@ -453,10 +448,16 @@ namespace Capture
             {
                 Text = "Añadir texto", StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog, ShowInTaskbar = false, MaximizeBox = false,
-                MinimizeBox = false, ClientSize = new Size(350, 95), Font = Font, Padding = new Padding(12)
+                MinimizeBox = false, ClientSize = new Size(350, 95), Font = Font, Padding = new Padding(12),
+                BackColor = Theme.Surface, ForeColor = Theme.Ink
             })
             {
-                var input = new TextBox { Dock = DockStyle.Top, AccessibleName = "Texto de la anotación" };
+                dialog.HandleCreated += delegate { Theme.ApplyDarkTitleBar(dialog.Handle); };
+                var input = new TextBox
+                {
+                    Dock = DockStyle.Top, AccessibleName = "Texto de la anotación",
+                    BackColor = Theme.ButtonSurface, ForeColor = Theme.Ink
+                };
                 var add = Theme.Button("Añadir", true);
                 add.DialogResult = DialogResult.OK;
                 var cancel = Theme.Button("Cancelar");

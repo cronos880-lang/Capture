@@ -129,6 +129,18 @@ namespace Capture
     {
         public static int Clamp(int value, int min, int max) { return Math.Max(min, Math.Min(value, max)); }
 
+        public static RectangleF Fit(Size image, Size viewport, int margin)
+        {
+            int width = viewport.Width - margin * 2;
+            int height = viewport.Height - margin * 2;
+            if (image.Width <= 0 || image.Height <= 0 || width <= 0 || height <= 0) return RectangleF.Empty;
+
+            float scale = Math.Min(width / (float)image.Width, height / (float)image.Height);
+            var fitted = new SizeF(image.Width * scale, image.Height * scale);
+            return new RectangleF((viewport.Width - fitted.Width) / 2f,
+                (viewport.Height - fitted.Height) / 2f, fitted.Width, fitted.Height);
+        }
+
         public static Rectangle Between(Point a, Point b)
         {
             return Rectangle.FromLTRB(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y),

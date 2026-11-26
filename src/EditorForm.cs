@@ -2,35 +2,41 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace Capture
 {
     static class Theme
     {
-        public static readonly Color Ink = Color.FromArgb(28, 42, 61);
-        public static readonly Color Muted = Color.FromArgb(78, 95, 115);
+        public static readonly Color Ink = Color.FromArgb(233, 239, 246);
+        public static readonly Color Muted = Color.FromArgb(184, 200, 215);
         public static readonly Color Blue = Color.FromArgb(23, 80, 190);
-        public static readonly Color Light = Color.FromArgb(239, 243, 248);
-        public static readonly Color Border = Color.FromArgb(216, 225, 236);
-        public static readonly Color Surface = Color.White;
+        public static readonly Color Accent = Color.FromArgb(116, 186, 251);
+        public static readonly Color Primary = Color.FromArgb(19, 108, 190);
+        public static readonly Color Background = Color.FromArgb(17, 24, 32);
+        public static readonly Color Surface = Color.FromArgb(25, 35, 46);
+        public static readonly Color ButtonSurface = Color.FromArgb(37, 56, 75);
+        public static readonly Color Active = Color.FromArgb(27, 62, 95);
+        public static readonly Color Border = Color.FromArgb(52, 67, 84);
+        public static readonly Color ControlBorder = Color.FromArgb(77, 99, 119);
 
         public static Button Button(string text, bool primary = false)
         {
             var button = new Button
             {
-                Text = text, AutoSize = true, Height = 34,
-                MinimumSize = new Size(0, 34),
-                Padding = new Padding(10, 0, 10, 0),
-                Margin = new Padding(0, 0, 7, 0),
+                Text = text, AutoSize = true,
+                MinimumSize = new Size(0, 32),
+                Padding = new Padding(9, 0, 9, 0),
+                Margin = new Padding(0, 0, 6, 0),
                 Cursor = Cursors.Hand,
                 FlatStyle = FlatStyle.Flat,
                 UseVisualStyleBackColor = false,
-                BackColor = primary ? Blue : Surface,
+                BackColor = primary ? Primary : ButtonSurface,
                 ForeColor = primary ? Color.White : Ink
             };
-            button.FlatAppearance.BorderColor = primary ? Blue : Border;
-            button.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(19, 67, 156) : Light;
+            button.FlatAppearance.BorderColor = primary ? Primary : ControlBorder;
+            button.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(21, 94, 161) : Active;
             return button;
         }
 
@@ -38,6 +44,19 @@ namespace Capture
         {
             return new Label { Text = text, AutoSize = true, ForeColor = muted ? Muted : Ink, Margin = new Padding(0) };
         }
+
+        public static void ApplyDarkTitleBar(IntPtr window)
+        {
+            if (Environment.OSVersion.Version.Build < 17763) return;
+            const int immersiveDarkMode = 20;
+            const int legacyImmersiveDarkMode = 19;
+            int dark = 1;
+            if (DwmSetWindowAttribute(window, immersiveDarkMode, ref dark, sizeof(int)) < 0)
+                DwmSetWindowAttribute(window, legacyImmersiveDarkMode, ref dark, sizeof(int));
+        }
+
+        [DllImport("dwmapi.dll")]
+        static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
     }
 
     sealed class EditorForm : Form
@@ -48,21 +67,18 @@ namespace Capture
         readonly Button copy = Theme.Button("Copiar");
         readonly Button save = Theme.Button("Guardar PNG");
         readonly Label status = Theme.Label("", true);
-        readonly Label inspectorTitle = Theme.Label("Anotaciones");
-        readonly Label inspectorHint = Theme.Label("Selecciona una anotación.", true);
-        readonly Label widthLabel = Theme.Label("Grosor del trazo (px)");
-        readonly Label headLabel = Theme.Label("Tamaño de la punta (px)");
-        readonly Label textSizeLabel = Theme.Label("Tamaño del texto (px)");
+        readonly Label widthLabel = Theme.Label("Grosor (px)");
+        readonly Label headLabel = Theme.Label("Punta (px)");
+        readonly Label textSizeLabel = Theme.Label("Texto (px)");
         readonly Label dimensionsLabel = Theme.Label("", true);
-        readonly FlowLayoutPanel inspectorControls = new FlowLayoutPanel();
-        readonly NumericUpDown width = new NumericUpDown { Minimum = 1, Maximum = 80, Value = 4, Width = 82 };
-        readonly NumericUpDown headSize = new NumericUpDown { Minimum = 6, Maximum = 180, Value = 16, Width = 82 };
-        readonly NumericUpDown textSize = new NumericUpDown { Minimum = 8, Maximum = 200, Value = 22, Width = 82 };
-        readonly CheckBox bold = new CheckBox { Text = "Negrita", AutoSize = true, Margin = new Padding(0, 6, 0, 0) };
+        readonly FlowLayoutPanel toolOptions = new FlowLayoutPanel();
+        readonly NumericUpDown width = new NumericUpDown { Minimum = 1, Maximum = 80, Value = 4, Width = 62 };
+        readonly NumericUpDown headSize = new NumericUpDown { Minimum = 6, Maximum = 180, Value = 16, Width = 62 };
+        readonly NumericUpDown textSize = new NumericUpDown { Minimum = 8, Maximum = 200, Value = 22, Width = 62 };
+        readonly CheckBox bold = new CheckBox { Text = "Negrita", AutoSize = true, Margin = new Padding(0, 7, 8, 3) };
         readonly Button otherColor = Theme.Button("Otro color…");
         readonly Button delete = Theme.Button("Eliminar");
         readonly ToolTip shortcuts = new ToolTip();
-        readonly Font inspectorFont;
         string hotKeyLabel;
         string notice;
         bool syncing;
@@ -77,24 +93,26 @@ namespace Capture
             Text = "Capture";
             Icon = icon;
             Font = SystemFonts.MessageBoxFont;
-            BackColor = Theme.Light;
+            BackColor = Theme.Background;
             ForeColor = Theme.Ink;
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(1080, 710);
             MinimumSize = new Size(690, 480);
+            WindowState = FormWindowState.Maximized;
             AutoScaleMode = AutoScaleMode.Dpi;
             AutoScaleDimensions = new SizeF(96, 96);
 
-            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(16) };
+            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(8) };
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
             var commands = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2, Margin = new Padding(0, 0, 0, 12),
-                Padding = new Padding(10), BackColor = Theme.Surface
+                Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2, Margin = new Padding(0, 0, 0, 4),
+                Padding = new Padding(8, 6, 2, 6), BackColor = Theme.Surface
             };
             commands.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             commands.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -115,41 +133,31 @@ namespace Capture
             commands.Controls.Add(tools, 0, 0);
             commands.Controls.Add(actions, 1, 0);
 
-            var workspace = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0)
-            };
-            workspace.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            workspace.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 219));
-            workspace.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             canvas.Dock = DockStyle.Fill;
-            canvas.Margin = new Padding(0, 0, 12, 0);
+            canvas.Margin = new Padding(0);
             canvas.EmptyClicked += delegate { RequestCapture(); };
 
-            var inspector = new FlowLayoutPanel
+            toolOptions.Dock = DockStyle.Fill;
+            toolOptions.AutoSize = true;
+            toolOptions.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            toolOptions.WrapContents = true;
+            toolOptions.BackColor = Theme.Surface;
+            toolOptions.Padding = new Padding(8, 4, 2, 2);
+            toolOptions.Margin = new Padding(0, 0, 0, 4);
+
+            var colors = new FlowLayoutPanel
             {
-                Dock = DockStyle.Fill, BackColor = Theme.Surface, Padding = new Padding(16),
-                Margin = new Padding(0), FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true
+                AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = false, Margin = new Padding(0, 5, 5, 3)
             };
-            inspectorFont = new Font(Font, FontStyle.Bold);
-            inspectorTitle.Font = inspectorFont;
-            inspectorTitle.Margin = new Padding(0, 0, 0, 16);
-            inspector.Controls.Add(inspectorTitle);
-            inspector.Controls.Add(inspectorHint);
-            inspectorControls.AutoSize = true;
-            inspectorControls.FlowDirection = FlowDirection.TopDown;
-            inspectorControls.WrapContents = false;
-            inspectorControls.Margin = new Padding(0);
-            inspectorControls.Controls.Add(Theme.Label("Color"));
-            var colors = CreateBar();
-            colors.Padding = new Padding(0, 8, 0, 4);
             foreach (Color color in new[] { Theme.Blue, Color.FromArgb(209, 74, 19),
-                Color.FromArgb(16, 132, 103), Color.FromArgb(119, 66, 181), Theme.Ink })
+                Color.FromArgb(16, 132, 103), Color.FromArgb(119, 66, 181), Color.FromArgb(28, 42, 61) })
             {
                 var swatch = Theme.Button("");
                 swatch.AutoSize = false;
                 swatch.MinimumSize = Size.Empty;
-                swatch.Size = new Size(24, 24);
+                swatch.Size = new Size(22, 22);
+                swatch.Margin = new Padding(0, 0, 4, 0);
                 swatch.Padding = new Padding(0);
                 swatch.BackColor = color;
                 swatch.FlatAppearance.MouseOverBackColor = ControlPaint.Light(color);
@@ -157,27 +165,24 @@ namespace Capture
                 swatch.Click += delegate { SetColor(color); };
                 colors.Controls.Add(swatch);
             }
-            inspectorControls.Controls.Add(colors);
+            toolOptions.Controls.Add(colors);
             otherColor.Click += ChooseColor;
-            inspectorControls.Controls.Add(otherColor);
+            toolOptions.Controls.Add(otherColor);
             AddMeasurement(widthLabel, width, (style, value) => style.StrokeWidth = value);
             AddMeasurement(headLabel, headSize, (style, value) => style.ArrowHeadSize = value);
             AddMeasurement(textSizeLabel, textSize, (style, value) => style.TextSize = value);
             bold.CheckedChanged += delegate { if (!syncing) canvas.UpdateStyle(style => style.Bold = bold.Checked); };
-            inspectorControls.Controls.Add(bold);
-            dimensionsLabel.Margin = new Padding(0, 12, 0, 0);
-            inspectorControls.Controls.Add(dimensionsLabel);
-            delete.Margin = new Padding(0, 12, 0, 0);
+            toolOptions.Controls.Add(bold);
             delete.Click += delegate { canvas.DeleteSelected(); };
-            inspectorControls.Controls.Add(delete);
-            inspector.Controls.Add(inspectorControls);
-            workspace.Controls.Add(canvas, 0, 0);
-            workspace.Controls.Add(inspector, 1, 0);
+            toolOptions.Controls.Add(delete);
+            dimensionsLabel.Margin = new Padding(6, 8, 6, 3);
+            toolOptions.Controls.Add(dimensionsLabel);
 
-            status.Margin = new Padding(1, 10, 0, 0);
+            status.Margin = new Padding(2, 6, 0, 0);
             layout.Controls.Add(commands, 0, 0);
-            layout.Controls.Add(workspace, 0, 1);
-            layout.Controls.Add(status, 0, 2);
+            layout.Controls.Add(toolOptions, 0, 1);
+            layout.Controls.Add(canvas, 0, 2);
+            layout.Controls.Add(status, 0, 3);
             Controls.Add(layout);
 
             canvas.StateChanged += delegate { notice = null; RefreshState(); };
@@ -189,15 +194,23 @@ namespace Capture
 
         void AddMeasurement(Label label, NumericUpDown input, Action<AnnotationStyle, int> update)
         {
-            label.Margin = new Padding(0, 14, 0, 4);
+            var group = new FlowLayoutPanel
+            {
+                AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false,
+                Margin = new Padding(3, 5, 8, 3)
+            };
+            label.Margin = new Padding(0, 3, 5, 0);
             input.Margin = new Padding(0);
+            input.BackColor = Theme.ButtonSurface;
+            input.ForeColor = Theme.Ink;
             input.AccessibleName = label.Text;
             input.ValueChanged += delegate
             {
                 if (!syncing) canvas.UpdateStyle(style => update(style, (int)input.Value));
             };
-            inspectorControls.Controls.Add(label);
-            inspectorControls.Controls.Add(input);
+            group.Controls.Add(label);
+            group.Controls.Add(input);
+            toolOptions.Controls.Add(group);
         }
 
         static FlowLayoutPanel CreateBar()
@@ -247,6 +260,12 @@ namespace Capture
                 "Capture", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
         }
 
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            Theme.ApplyDarkTitleBar(Handle);
+        }
+
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             if (e.CloseReason == CloseReason.UserClosing && !ConfirmDiscard()) e.Cancel = true;
@@ -266,25 +285,25 @@ namespace Capture
 
         void RefreshState()
         {
+            // Keep the viewport fixed while mouse coordinates are driving a drag.
+            if (canvas.IsDragging) return;
             bool hasImage = canvas.HasImage;
             foreach (var pair in toolButtons)
             {
                 pair.Value.Enabled = hasImage;
                 bool active = hasImage && canvas.ActiveTool == pair.Key;
-                pair.Value.BackColor = active ? Theme.Light : Theme.Surface;
-                pair.Value.FlatAppearance.BorderColor = active ? Theme.Blue : Theme.Border;
-                pair.Value.ForeColor = active ? Theme.Blue : Theme.Ink;
+                pair.Value.BackColor = active ? Theme.Active : Theme.ButtonSurface;
+                pair.Value.FlatAppearance.BorderColor = active ? Theme.Accent : Theme.ControlBorder;
+                pair.Value.ForeColor = active ? Theme.Accent : Theme.Ink;
             }
 
             var selected = canvas.Selected;
             var tool = canvas.StyleTool;
             var style = canvas.EditableStyle;
-            inspectorTitle.Text = style == null ? "Anotaciones" : ToolName(tool);
-            inspectorHint.Visible = style == null && hasImage;
-            inspectorControls.Visible = style != null;
-            widthLabel.Visible = width.Visible = style != null && tool != Tool.Text;
-            headLabel.Visible = headSize.Visible = tool == Tool.Arrow;
-            textSizeLabel.Visible = textSize.Visible = bold.Visible = tool == Tool.Text;
+            toolOptions.SuspendLayout();
+            width.Parent.Visible = style != null && tool != Tool.Text;
+            headSize.Parent.Visible = tool == Tool.Arrow;
+            textSize.Parent.Visible = bold.Visible = tool == Tool.Text;
             delete.Visible = selected != null;
             dimensionsLabel.Visible = selected != null && tool != Tool.Text;
             dimensionsLabel.Text = MeasureShape(selected);
@@ -298,6 +317,8 @@ namespace Capture
                 syncing = false;
                 otherColor.FlatAppearance.BorderColor = style.Color;
             }
+            toolOptions.Visible = style != null;
+            toolOptions.ResumeLayout();
             copy.Enabled = save.Enabled = hasImage;
             string dimensions = hasImage ? string.Format("{0} × {1} px", canvas.ImageSize.Width, canvas.ImageSize.Height) : "";
             string usage = canvas.ActiveTool == Tool.Arrow ? "Pulsa donde irá la punta y arrastra para extender el trazo."
@@ -365,11 +386,7 @@ namespace Capture
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing)
-            {
-                shortcuts.Dispose();
-                inspectorFont.Dispose();
-            }
+            if (disposing) shortcuts.Dispose();
             base.Dispose(disposing);
         }
     }

@@ -245,10 +245,11 @@ namespace Capture
             using (var g = Graphics.FromImage(frame.Bitmap))
             using (var shade = new SolidBrush(Color.FromArgb(135, 13, 23, 41)))
             using (var dimmed = new Region(dirty))
-            using (var border = new Pen(Theme.Blue, 2))
+            using (var border = new Pen(Theme.Accent, 2))
             using (var white = new SolidBrush(Color.White))
-            using (var blue = new SolidBrush(Theme.Blue))
-            using (var gray = new SolidBrush(Theme.Light))
+            using (var blue = new SolidBrush(Theme.Primary))
+            using (var panel = new SolidBrush(Theme.Surface))
+            using (var button = new SolidBrush(Theme.ButtonSurface))
             using (var ink = new SolidBrush(Theme.Ink))
             {
                 g.SetClip(dirty);
@@ -274,15 +275,15 @@ namespace Capture
                 {
                     if (hint)
                     {
-                        g.FillRectangle(white, hintBounds);
+                        g.FillRectangle(panel, hintBounds);
                         g.DrawString("Arrastra para seleccionar un área", actionFont, ink, hintBounds, textStyle);
                     }
                     if (!actions.IsEmpty)
                     {
-                        g.FillRectangle(white, actions);
+                        g.FillRectangle(panel, actions);
                         g.DrawString(string.Format("{0} × {1} px", selection.Width, selection.Height),
                             instructionFont, ink, new Rectangle(actions.X, actions.Y, 125, actions.Height), textStyle);
-                        g.FillRectangle(gray, cancel);
+                        g.FillRectangle(button, cancel);
                         g.DrawString("Cancelar", actionFont, ink, cancel, textStyle);
                         g.FillRectangle(blue, confirm);
                         g.DrawString("Capturar", actionFont, white, confirm, textStyle);
