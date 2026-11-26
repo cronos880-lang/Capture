@@ -50,10 +50,17 @@ namespace Capture
         readonly Label status = Theme.Label("", true);
         readonly Label inspectorTitle = Theme.Label("Anotaciones");
         readonly Label inspectorHint = Theme.Label("Selecciona una anotación.", true);
-        readonly Label widthLabel = Theme.Label("Grosor (px)");
+        readonly Label widthLabel = Theme.Label("Grosor del trazo (px)");
+        readonly Label headLabel = Theme.Label("Tamaño de la punta (px)");
+        readonly Label textSizeLabel = Theme.Label("Tamaño del texto (px)");
+        readonly Label dimensionsLabel = Theme.Label("", true);
         readonly FlowLayoutPanel inspectorControls = new FlowLayoutPanel();
-        readonly NumericUpDown width = new NumericUpDown { Minimum = 1, Maximum = 30, Value = 4, Width = 74 };
+        readonly NumericUpDown width = new NumericUpDown { Minimum = 1, Maximum = 80, Value = 4, Width = 82 };
+        readonly NumericUpDown headSize = new NumericUpDown { Minimum = 6, Maximum = 180, Value = 16, Width = 82 };
+        readonly NumericUpDown textSize = new NumericUpDown { Minimum = 8, Maximum = 200, Value = 22, Width = 82 };
+        readonly CheckBox bold = new CheckBox { Text = "Negrita", AutoSize = true, Margin = new Padding(0, 6, 0, 0) };
         readonly Button otherColor = Theme.Button("Otro color…");
+        readonly Button delete = Theme.Button("Eliminar");
         readonly ToolTip shortcuts = new ToolTip();
         readonly Font inspectorFont;
         string hotKeyLabel;
@@ -61,6 +68,7 @@ namespace Capture
         bool syncing;
 
         public event EventHandler CaptureRequested;
+        public bool HasCapture { get { return canvas.HasImage; } }
         public bool HasUnsavedChanges { get { return canvas.Modified; } }
         public bool IsEditing { get { return canvas.IsDragging; } }
 
@@ -121,7 +129,7 @@ namespace Capture
             var inspector = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill, BackColor = Theme.Surface, Padding = new Padding(16),
-                Margin = new Padding(0), FlowDirection = FlowDirection.TopDown, WrapContents = false
+                Margin = new Padding(0), FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true
             };
             inspectorFont = new Font(Font, FontStyle.Bold);
             inspectorTitle.Font = inspectorFont;
@@ -146,18 +154,20 @@ namespace Capture
                 swatch.BackColor = color;
                 swatch.FlatAppearance.MouseOverBackColor = ControlPaint.Light(color);
                 swatch.AccessibleName = "Color " + ColorTranslator.ToHtml(color);
-                swatch.Click += delegate { if (canvas.Selected != null) canvas.SetSelectedColor(color); };
+                swatch.Click += delegate { SetColor(color); };
                 colors.Controls.Add(swatch);
             }
             inspectorControls.Controls.Add(colors);
             otherColor.Click += ChooseColor;
             inspectorControls.Controls.Add(otherColor);
-            widthLabel.Margin = new Padding(0, 16, 0, 5);
-            width.Margin = new Padding(0, 0, 0, 12);
-            width.ValueChanged += delegate { if (!syncing) canvas.SetSelectedWidth((int)width.Value); };
-            inspectorControls.Controls.Add(widthLabel);
-            inspectorControls.Controls.Add(width);
-            var delete = Theme.Button("Eliminar");
+            AddMeasurement(widthLabel, width, (style, value) => style.StrokeWidth = value);
+            AddMeasurement(headLabel, headSize, (style, value) => style.ArrowHeadSize = value);
+            AddMeasurement(textSizeLabel, textSize, (style, value) => style.TextSize = value);
+            bold.CheckedChanged += delegate { if (!syncing) canvas.UpdateStyle(style => style.Bold = bold.Checked); };
+            inspectorControls.Controls.Add(bold);
+            dimensionsLabel.Margin = new Padding(0, 12, 0, 0);
+            inspectorControls.Controls.Add(dimensionsLabel);
+            delete.Margin = new Padding(0, 12, 0, 0);
             delete.Click += delegate { canvas.DeleteSelected(); };
             inspectorControls.Controls.Add(delete);
             inspector.Controls.Add(inspectorControls);
@@ -175,6 +185,19 @@ namespace Capture
             copy.Click += delegate { Export(false); };
             save.Click += delegate { Export(true); };
             RefreshState();
+        }
+
+        void AddMeasurement(Label label, NumericUpDown input, Action<AnnotationStyle, int> update)
+        {
+            label.Margin = new Padding(0, 14, 0, 4);
+            input.Margin = new Padding(0);
+            input.AccessibleName = label.Text;
+            input.ValueChanged += delegate
+            {
+                if (!syncing) canvas.UpdateStyle(style => update(style, (int)input.Value));
+            };
+            inspectorControls.Controls.Add(label);
+            inspectorControls.Controls.Add(input);
         }
 
         static FlowLayoutPanel CreateBar()
@@ -253,17 +276,27 @@ namespace Capture
                 pair.Value.ForeColor = active ? Theme.Blue : Theme.Ink;
             }
 
-            Annotation selected = canvas.Selected;
-            inspectorTitle.Text = selected == null ? "Anotaciones" : ToolName(selected.Kind);
-            inspectorHint.Visible = selected == null && hasImage;
-            inspectorControls.Visible = selected != null;
-            widthLabel.Visible = width.Visible = selected != null && selected.Kind != Tool.Text;
-            if (selected != null)
+            var selected = canvas.Selected;
+            var tool = canvas.StyleTool;
+            var style = canvas.EditableStyle;
+            inspectorTitle.Text = style == null ? "Anotaciones" : ToolName(tool);
+            inspectorHint.Visible = style == null && hasImage;
+            inspectorControls.Visible = style != null;
+            widthLabel.Visible = width.Visible = style != null && tool != Tool.Text;
+            headLabel.Visible = headSize.Visible = tool == Tool.Arrow;
+            textSizeLabel.Visible = textSize.Visible = bold.Visible = tool == Tool.Text;
+            delete.Visible = selected != null;
+            dimensionsLabel.Visible = selected != null && tool != Tool.Text;
+            dimensionsLabel.Text = MeasureShape(selected);
+            if (style != null)
             {
                 syncing = true;
-                width.Value = selected.Width;
+                width.Value = style.StrokeWidth;
+                headSize.Value = style.ArrowHeadSize;
+                textSize.Value = style.TextSize;
+                bold.Checked = style.Bold;
                 syncing = false;
-                otherColor.FlatAppearance.BorderColor = selected.Color;
+                otherColor.FlatAppearance.BorderColor = style.Color;
             }
             copy.Enabled = save.Enabled = hasImage;
             string dimensions = hasImage ? string.Format("{0} × {1} px", canvas.ImageSize.Width, canvas.ImageSize.Height) : "";
@@ -273,11 +306,30 @@ namespace Capture
             status.Text = dimensions.Length == 0 ? message : dimensions + "    ·    " + message;
         }
 
+        static string MeasureShape(Annotation shape)
+        {
+            if (shape == null || shape.Kind == Tool.Text) return "";
+            var size = shape.Bounds.Size;
+            if (shape.IsSegment)
+            {
+                var length = Math.Sqrt((double)size.Width * size.Width + (double)size.Height * size.Height);
+                return string.Format("Longitud {0:0} px", length);
+            }
+            return string.Format("{0} × {1} px", size.Width, size.Height);
+        }
+
         void ChooseColor(object sender, EventArgs e)
         {
-            if (canvas.Selected == null) return;
-            using (var dialog = new ColorDialog { Color = canvas.Selected.Color, FullOpen = true })
-                if (dialog.ShowDialog(this) == DialogResult.OK) canvas.SetSelectedColor(dialog.Color);
+            var style = canvas.EditableStyle;
+            if (style == null) return;
+            using (var dialog = new ColorDialog { Color = style.Color, FullOpen = true })
+                if (dialog.ShowDialog(this) == DialogResult.OK) SetColor(dialog.Color);
+        }
+
+        void SetColor(Color color)
+        {
+            var style = canvas.EditableStyle;
+            if (style != null && style.Color != color) canvas.UpdateStyle(current => current.Color = color);
         }
 
         void Export(bool toFile)

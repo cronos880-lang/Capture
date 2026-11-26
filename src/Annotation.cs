@@ -5,19 +5,34 @@ namespace Capture
 {
     enum Tool { Select, Rectangle, Arrow, Line, Text }
 
+    sealed class AnnotationStyle
+    {
+        public Color Color = Theme.Blue;
+        public int StrokeWidth = 4;
+        public int ArrowHeadSize = 16;
+        public int TextSize = 22;
+        public bool Bold;
+
+        public AnnotationStyle Copy() { return (AnnotationStyle)MemberwiseClone(); }
+
+        public Font CreateTextFont()
+        {
+            return new Font("Segoe UI", TextSize, Bold ? FontStyle.Bold : FontStyle.Regular, GraphicsUnit.Pixel);
+        }
+    }
+
     sealed class Annotation
     {
         public Tool Kind;
         public Point Start;
         public Point End;
-        public Color Color;
-        public int Width = 4;
+        public AnnotationStyle Style;
         public string Text;
 
         // With an arrow the first click anchors its tip. The moving endpoint is the tail.
-        public static Annotation StartAt(Tool tool, Point anchor, Color color)
+        public static Annotation StartAt(Tool tool, Point anchor, AnnotationStyle style)
         {
-            return new Annotation { Kind = tool, Start = anchor, End = anchor, Color = color };
+            return new Annotation { Kind = tool, Start = anchor, End = anchor, Style = style.Copy() };
         }
 
         public bool IsSegment { get { return Kind == Tool.Arrow || Kind == Tool.Line; } }
@@ -41,32 +56,30 @@ namespace Capture
             }
         }
 
-        public void Draw(Graphics g, Font textFont)
+        public void Draw(Graphics g)
         {
             if (!Valid) return;
-            using (var pen = new Pen(Color, Width))
-            using (var brush = new SolidBrush(Color))
+            using (var brush = new SolidBrush(Style.Color))
             {
-                switch (Kind)
+                if (Kind == Tool.Text)
                 {
-                    case Tool.Rectangle:
-                        g.DrawRectangle(pen, Bounds);
-                        break;
-                    case Tool.Line:
-                        g.DrawLine(pen, Start, End);
-                        break;
-                    case Tool.Arrow:
+                    using (var font = Style.CreateTextFont()) g.DrawString(Text, font, brush, Start);
+                    return;
+                }
+                using (var pen = new Pen(Style.Color, Style.StrokeWidth))
+                {
+                    if (Kind == Tool.Rectangle) g.DrawRectangle(pen, Bounds);
+                    else if (Kind == Tool.Line) g.DrawLine(pen, Start, End);
+                    else
+                    {
                         PointF neck;
                         PointF[] head = ArrowHead(out neck);
                         float dx = head[1].X - head[2].X, dy = head[1].Y - head[2].Y;
                         float headWidth = (float)Math.Sqrt(dx * dx + dy * dy);
-                        pen.Width = Math.Min(Width, Math.Max(1, headWidth));
+                        pen.Width = Math.Min(Style.StrokeWidth, Math.Max(1, headWidth));
                         g.DrawLine(pen, (PointF)End, neck);
                         g.FillPolygon(brush, head);
-                        break;
-                    case Tool.Text:
-                        g.DrawString(Text, textFont, brush, Start);
-                        break;
+                    }
                 }
             }
         }
@@ -82,8 +95,8 @@ namespace Capture
                 return new[] { (PointF)tip, tip, tip };
             }
             double ux = dx / distance, uy = dy / distance;
-            double length = Math.Min(distance * 0.60, Math.Max(10, Width * 4.0));
-            double half = length * 0.42;
+            double length = Math.Min(distance * 0.60, Style.ArrowHeadSize);
+            double half = Math.Max(length * 0.42, Math.Min(distance * 0.42, Style.StrokeWidth * 0.60));
             double x = tip.X - ux * length, y = tip.Y - uy * length;
             shaftEnd = new PointF((float)(x + ux * length * 0.10), (float)(y + uy * length * 0.10));
             return new[] { (PointF)tip, new PointF((float)(x - uy * half), (float)(y + ux * half)),

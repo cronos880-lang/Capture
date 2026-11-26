@@ -14,12 +14,25 @@ namespace Capture
         sealed class Drag
         {
             public Point Pointer, Start, End;
+            public Point RectangleHandle;
             public Endpoint Part;
             public bool Creating;
         }
 
         readonly List<Annotation> annotations = new List<Annotation>();
-        readonly Font annotationFont = new Font("Segoe UI", 22, FontStyle.Regular, GraphicsUnit.Pixel);
+        readonly Dictionary<Tool, AnnotationStyle> defaults = new Dictionary<Tool, AnnotationStyle>
+        {
+            { Tool.Rectangle, new AnnotationStyle() },
+            { Tool.Arrow, new AnnotationStyle { Color = Color.FromArgb(209, 74, 19) } },
+            { Tool.Line, new AnnotationStyle() },
+            { Tool.Text, new AnnotationStyle() }
+        };
+        static readonly Point[] RectangleHandles =
+        {
+            new Point(-1, -1), new Point(0, -1), new Point(1, -1),
+            new Point(-1, 0),                   new Point(1, 0),
+            new Point(-1, 1), new Point(0, 1), new Point(1, 1)
+        };
         readonly Font emptyFont = new Font("Segoe UI", 14, FontStyle.Regular, GraphicsUnit.Point);
         Bitmap image;
         Drag drag;
@@ -28,6 +41,11 @@ namespace Capture
         public bool Modified { get; private set; }
         public bool IsDragging { get { return drag != null; } }
         public bool HasImage { get { return image != null; } }
+        public Tool StyleTool { get { return Selected == null ? ActiveTool : Selected.Kind; } }
+        public AnnotationStyle EditableStyle
+        {
+            get { return Selected != null ? Selected.Style : ActiveTool != Tool.Select ? defaults[ActiveTool] : null; }
+        }
         public Size ImageSize { get { return image == null ? Size.Empty : image.Size; } }
         public event EventHandler StateChanged;
         public event EventHandler EmptyClicked;
@@ -69,19 +87,12 @@ namespace Capture
             if (handler != null) handler(this, EventArgs.Empty);
         }
 
-        public void SetSelectedColor(Color color)
+        public void UpdateStyle(Action<AnnotationStyle> update)
         {
-            if (Selected == null || color == Selected.Color) return;
-            Selected.Color = color;
-            Modified = true;
-            Changed();
-        }
-
-        public void SetSelectedWidth(int width)
-        {
-            if (Selected == null || width == Selected.Width) return;
-            Selected.Width = width;
-            Modified = true;
+            var style = EditableStyle;
+            if (style == null || drag != null) return;
+            update(style);
+            if (Selected != null) Modified = true;
             Changed();
         }
 
@@ -114,7 +125,7 @@ namespace Capture
         void DrawAnnotations(Graphics graphics)
         {
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            foreach (var annotation in annotations) annotation.Draw(graphics, annotationFont);
+            foreach (var annotation in annotations) annotation.Draw(graphics);
         }
 
         RectangleF View()
@@ -157,10 +168,32 @@ namespace Capture
             return end <= start ? Endpoint.End : Endpoint.Start;
         }
 
+        static Point RectangleHandlePosition(Rectangle bounds, Point direction)
+        {
+            return new Point(bounds.Left + (direction.X + 1) * bounds.Width / 2,
+                bounds.Top + (direction.Y + 1) * bounds.Height / 2);
+        }
+
+        Point PickRectangleHandle(Point cursor, RectangleF view)
+        {
+            if (Selected == null || Selected.Kind != Tool.Rectangle) return Point.Empty;
+            Point closest = Point.Empty;
+            var distance = double.PositiveInfinity;
+            foreach (var direction in RectangleHandles)
+            {
+                double candidate = HandleDistance(HandleBox(RectangleHandlePosition(Selected.Bounds, direction), view), cursor);
+                if (candidate >= distance) continue;
+                closest = direction;
+                distance = candidate;
+            }
+            return closest;
+        }
+
         RectangleF TextBounds(Annotation annotation)
         {
             if (annotation.Kind != Tool.Text) return RectangleF.Empty;
-            return new RectangleF(annotation.Start, TextRenderer.MeasureText(annotation.Text, annotationFont));
+            using (var font = annotation.Style.CreateTextFont())
+                return new RectangleF(annotation.Start, TextRenderer.MeasureText(annotation.Text, font));
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -187,21 +220,27 @@ namespace Capture
             g.DrawImage(image, 0, 0, image.Width, image.Height);
             DrawAnnotations(g);
 
-            if (Selected != null && !Selected.IsSegment)
+            if (Selected != null && Selected.Kind == Tool.Text)
             {
-                RectangleF bounds = Selected.Kind == Tool.Text ? TextBounds(Selected) : Selected.Bounds;
+                RectangleF bounds = TextBounds(Selected);
                 bounds.Inflate(4 / ratio, 4 / ratio);
                 using (var pen = new Pen(Theme.Blue, 1 / ratio) { DashStyle = DashStyle.Dash })
                     g.DrawRectangle(pen, bounds.X, bounds.Y, bounds.Width, bounds.Height);
             }
             g.Restore(saved);
 
-            if (Selected != null && Selected.IsSegment && drag == null)
+            if (Selected != null && drag == null)
             {
                 using (var pen = new Pen(Theme.Blue, 1.5f))
                 {
-                    DrawHandle(g, HandleBox(Selected.Start, view), pen);
-                    DrawHandle(g, HandleBox(Selected.End, view), pen);
+                    if (Selected.IsSegment)
+                    {
+                        DrawHandle(g, HandleBox(Selected.Start, view), pen);
+                        DrawHandle(g, HandleBox(Selected.End, view), pen);
+                    }
+                    else if (Selected.Kind == Tool.Rectangle)
+                        foreach (var direction in RectangleHandles)
+                            DrawHandle(g, HandleBox(RectangleHandlePosition(Selected.Bounds, direction), view), pen);
                 }
             }
         }
@@ -230,6 +269,12 @@ namespace Capture
 
             if (ActiveTool == Tool.Select)
             {
+                Point rectangleHandle = PickRectangleHandle(e.Location, view);
+                if (rectangleHandle != Point.Empty)
+                {
+                    StartDrag(pixel, Endpoint.Body, false, rectangleHandle);
+                    return;
+                }
                 Endpoint endpoint = PickEndpoint(e.Location, view);
                 if (endpoint != Endpoint.Body)
                 {
@@ -242,7 +287,7 @@ namespace Capture
                     for (int i = annotations.Count - 1; i >= 0; i--)
                     {
                         var item = annotations[i];
-                        if (!item.Hit(pixel, TextBounds(item), tolerance + item.Width / 2.0f)) continue;
+                        if (!item.Hit(pixel, TextBounds(item), tolerance + item.Style.StrokeWidth / 2.0f)) continue;
                         Selected = item;
                         StartDrag(pixel, Endpoint.Body, false);
                         return;
@@ -251,8 +296,7 @@ namespace Capture
             }
             else if (view.Contains(e.Location))
             {
-                var color = ActiveTool == Tool.Arrow ? Color.FromArgb(209, 74, 19) : Theme.Blue;
-                var item = Annotation.StartAt(ActiveTool, pixel, color);
+                var item = Annotation.StartAt(ActiveTool, pixel, defaults[ActiveTool]);
                 if (ActiveTool == Tool.Text)
                 {
                     item.Text = PromptForText();
@@ -272,9 +316,13 @@ namespace Capture
             }
         }
 
-        void StartDrag(Point pointer, Endpoint endpoint, bool creating)
+        void StartDrag(Point pointer, Endpoint endpoint, bool creating, Point rectangleHandle = default(Point))
         {
-            drag = new Drag { Pointer = pointer, Start = Selected.Start, End = Selected.End, Part = endpoint, Creating = creating };
+            drag = new Drag
+            {
+                Pointer = pointer, Start = Selected.Start, End = Selected.End, Part = endpoint,
+                Creating = creating, RectangleHandle = rectangleHandle
+            };
             Capture = true;
             Changed();
         }
@@ -286,7 +334,8 @@ namespace Capture
             else if (HasImage && ActiveTool == Tool.Select)
             {
                 var view = View();
-                Cursor = !view.IsEmpty && PickEndpoint(e.Location, view) != Endpoint.Body ? Cursors.Hand : Cursors.Default;
+                Cursor = !view.IsEmpty && (PickEndpoint(e.Location, view) != Endpoint.Body ||
+                    PickRectangleHandle(e.Location, view) != Point.Empty) ? Cursors.Hand : Cursors.Default;
             }
         }
 
@@ -296,6 +345,25 @@ namespace Capture
             if (view.IsEmpty) return;
             Point point = ImagePoint(location, view);
             int dx = point.X - drag.Pointer.X, dy = point.Y - drag.Pointer.Y;
+            if (drag.RectangleHandle != Point.Empty)
+            {
+                var original = Geometry.Between(drag.Start, drag.End);
+                var corner = RectangleHandlePosition(original, drag.RectangleHandle);
+                var resized = Geometry.AdjustSelection(original, drag.RectangleHandle, drag.Pointer,
+                    new Point(corner.X + dx, corner.Y + dy), new Size(image.Width - 1, image.Height - 1));
+                if (resized == original)
+                {
+                    Selected.Start = drag.Start;
+                    Selected.End = drag.End;
+                }
+                else
+                {
+                    Selected.Start = resized.Location;
+                    Selected.End = new Point(resized.Right, resized.Bottom);
+                }
+                Invalidate();
+                return;
+            }
             switch (drag.Part)
             {
                 case Endpoint.Start:
@@ -410,7 +478,6 @@ namespace Capture
             if (disposing)
             {
                 if (image != null) { image.Dispose(); image = null; }
-                annotationFont.Dispose();
                 emptyFont.Dispose();
             }
             base.Dispose(disposing);

@@ -51,14 +51,14 @@ namespace Capture
         readonly CaptureHotKey hotKey;
         readonly System.Windows.Forms.Timer captureTimer;
         RegionSelector selector;
-        bool editorWasMinimized;
+        bool restoreEditor;
         bool finishingCapture;
 
         public CaptureApplication(Icon icon)
         {
             editor = new EditorForm(icon);
-            MainForm = editor;
             editor.CaptureRequested += RequestCapture;
+            editor.FormClosed += delegate { ExitThread(); };
 
             captureTimer = new System.Windows.Forms.Timer { Interval = 140 };
             captureTimer.Tick += BeginSelection;
@@ -70,12 +70,24 @@ namespace Capture
             captureItem.Click += RequestCapture;
             if (hotKey.Registered)
                 ((ToolStripMenuItem)captureItem).ShortcutKeyDisplayString = "Ctrl+Alt+R";
-            menu.Items.Add("Abrir Capture").Click += delegate { if (!Busy) ShowEditor(true); };
-            menu.Items.Add("Salir").Click += delegate { if (!Busy) editor.Close(); };
+            var open = menu.Items.Add("Abrir editor");
+            open.Click += delegate { if (!Busy) ShowEditor(true); };
+            menu.Opening += delegate { open.Available = editor.HasCapture; };
+            menu.Items.Add("Salir").Click += delegate
+            {
+                if (Busy) return;
+                if (editor.IsHandleCreated) editor.Close();
+                else ExitThread();
+            };
 
             tray = new NotifyIcon { Icon = icon, ContextMenuStrip = menu, Visible = true };
             tray.Text = hotKey.Registered ? "Capture · Ctrl+Alt+R" : "Capture";
-            tray.DoubleClick += delegate { if (!Busy) ShowEditor(true); };
+            tray.DoubleClick += delegate
+            {
+                if (Busy) return;
+                if (editor.HasCapture) ShowEditor(true);
+                else RequestCapture(this, EventArgs.Empty);
+            };
             editor.SetShortcutAvailable(hotKey.Registered);
         }
 
@@ -83,9 +95,14 @@ namespace Capture
 
         void RequestCapture(object sender, EventArgs e)
         {
-            if (Busy || editor.IsDisposed || editor.IsEditing || !NativeWindowEnabled(editor.Handle)) return;
-            editorWasMinimized = editor.WindowState == FormWindowState.Minimized;
-            editor.Hide();
+            if (Busy || editor.IsDisposed || editor.IsEditing ||
+                (editor.IsHandleCreated && !NativeWindowEnabled(editor.Handle))) return;
+            restoreEditor = editor.Visible;
+            if (restoreEditor)
+            {
+                ExcludeEditorFromCapture(true);
+                editor.Hide();
+            }
             captureTimer.Start();
         }
 
@@ -95,6 +112,8 @@ namespace Capture
             try
             {
                 DwmFlush();
+                if (editor.IsHandleCreated && IsWindowVisible(editor.Handle))
+                    throw new InvalidOperationException("La ventana del editor aún está visible.");
                 var bounds = SystemInformation.VirtualScreen;
                 var desktop = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppRgb);
                 try
@@ -116,8 +135,9 @@ namespace Capture
                     selector.Dispose();
                     selector = null;
                 }
-                ShowEditor(!editorWasMinimized);
-                MessageBox.Show(editor, "No se pudo mostrar el recorte. " + error.Message, "Capture",
+                RestoreEditor();
+                var owner = editor.Visible ? editor : null;
+                MessageBox.Show(owner, "No se pudo mostrar el recorte. " + error.Message, "Capture",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
@@ -130,14 +150,18 @@ namespace Capture
             Bitmap capture = closedSelector.TakeResult();
             try
             {
-                bool showActive = capture != null || !editorWasMinimized;
-                if (capture != null && editor.HasUnsavedChanges) ShowEditor(true);
-                if (capture != null && editor.ConfirmDiscard())
+                if (capture == null)
+                {
+                    RestoreEditor();
+                    return;
+                }
+                if (editor.HasUnsavedChanges) ShowEditor(true);
+                if (editor.ConfirmDiscard())
                 {
                     editor.SetCapture(capture);
                     capture = null;
                 }
-                ShowEditor(showActive);
+                ShowEditor(true);
             }
             finally
             {
@@ -149,10 +173,23 @@ namespace Capture
         void ShowEditor(bool activate)
         {
             if (editor.IsDisposed) return;
+            ExcludeEditorFromCapture(false);
             if (activate && editor.WindowState == FormWindowState.Minimized)
                 editor.WindowState = FormWindowState.Normal;
             editor.Show();
             if (activate) editor.Activate();
+        }
+
+        void RestoreEditor()
+        {
+            if (restoreEditor) ShowEditor(editor.WindowState != FormWindowState.Minimized);
+        }
+
+        void ExcludeEditorFromCapture(bool exclude)
+        {
+            // WDA_EXCLUDEFROMCAPTURE was introduced in Windows 10, version 2004.
+            if (editor.IsHandleCreated && Environment.OSVersion.Version.Build >= 19041)
+                SetWindowDisplayAffinity(editor.Handle, exclude ? 0x11u : 0u);
         }
 
         protected override void Dispose(bool disposing)
@@ -168,6 +205,7 @@ namespace Capture
                     selector.FormClosed -= SelectionClosed;
                     selector.Dispose();
                 }
+                if (!editor.IsDisposed) editor.Dispose();
             }
             base.Dispose(disposing);
         }
@@ -178,6 +216,14 @@ namespace Capture
         [DllImport("user32.dll", EntryPoint = "IsWindowEnabled")]
         [return: MarshalAs(UnmanagedType.Bool)]
         static extern bool NativeWindowEnabled(IntPtr window);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool IsWindowVisible(IntPtr window);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool SetWindowDisplayAffinity(IntPtr window, uint affinity);
     }
 
     sealed class CaptureHotKey : NativeWindow, IDisposable
