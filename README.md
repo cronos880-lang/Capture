@@ -30,7 +30,8 @@ En Windows 10 (versión 1703 o posterior) o Windows 11, abre `Iniciar-Capture.cm
 
 - Abre la aplicación o el escritorio que quieras capturar y pulsa **Ctrl+Alt+R**. También puedes abrir el menú del icono de Capture y elegir **Nueva captura**, incluso si otra aplicación ya está usando el atajo. Si el icono está oculto, despliega la flecha junto al reloj.
 - Arrastra para seleccionar un área y ajusta sus bordes con los tiradores. Confirma con **Capturar** o **Intro**. **Esc** cancela.
-- Usa **Rectángulo**, **Flecha**, **Línea** o **Texto**. **Línea** dibuja un segmento recto sin punta. Al terminar, el editor vuelve a **Seleccionar**. Puedes arrastrar una anotación, cambiar su color, ajustar el grosor de las formas o eliminarla.
+- Para dibujar una **Flecha**, pulsa donde debe empezar y arrastra hasta el punto al que debe señalar. El trazo y la punta se dibujan juntos. **Línea** usa el mismo gesto y dibuja un segmento sin punta.
+- Al terminar, el editor vuelve a **Seleccionar**. En una línea o flecha seleccionada, arrastra cualquiera de los dos tiradores para cambiar el ángulo o la longitud. Arrastra el cuerpo para mover la anotación entera. También puedes añadir un **Rectángulo** o **Texto**, cambiar colores, ajustar el grosor de las formas y eliminar anotaciones.
 - **Copiar** lleva la imagen anotada al portapapeles. **Guardar** genera un PNG con las dimensiones del recorte.
 - **Nueva captura** también está disponible en el editor. Al cancelar el recorte, vuelve la captura anterior. Capture pide confirmación si vas a descartar cambios de anotación que todavía no has copiado ni guardado.
 - Para cerrar el programa y liberar el atajo, elige **Salir** en el menú del icono junto al reloj.

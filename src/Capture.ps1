@@ -17,6 +17,20 @@ public static class CaptureDisplay {
     public static extern bool IsWindowEnabled(IntPtr window);
 }
 
+public sealed class CaptureOverlay : Form {
+    public CaptureOverlay() {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+            ControlStyles.OptimizedDoubleBuffer | ControlStyles.Opaque, true);
+    }
+}
+
+public sealed class CaptureCanvas : Panel {
+    public CaptureCanvas() {
+        DoubleBuffered = true;
+        ResizeRedraw = true;
+    }
+}
+
 public sealed class CaptureHotKey : NativeWindow, IDisposable {
     private const int HotKeyId = 1;
     private const int HotKeyMessage = 0x0312;
@@ -54,7 +68,7 @@ public sealed class CaptureHotKey : NativeWindow, IDisposable {
         DestroyHandle();
     }
 }
-'@ -ReferencedAssemblies System.Windows.Forms -ErrorAction Stop
+'@ -ReferencedAssemblies System.Windows.Forms, System.Drawing -ErrorAction Stop
 [void][CaptureDisplay]::SetProcessDpiAwarenessContext([IntPtr](-4))
 [Application]::EnableVisualStyles()
 
@@ -78,7 +92,7 @@ function New-Button($caption, $action) {
 }
 
 function Get-Crop($desktop, $bounds) {
-    $overlay = [Form]::new()
+    $overlay = [CaptureOverlay]::new()
     $overlay.StartPosition = 'Manual'
     $overlay.FormBorderStyle = 'None'
     $overlay.Bounds = $bounds
@@ -86,7 +100,6 @@ function Get-Crop($desktop, $bounds) {
     $overlay.ShowInTaskbar = $false
     $overlay.KeyPreview = $true
     $overlay.Font = $font
-    $overlay.BackgroundImage = $desktop
 
     $hint = [Label]::new()
     $hint.AutoSize = $true
@@ -110,18 +123,22 @@ function Get-Crop($desktop, $bounds) {
 
     $overlay.Add_Paint({
         param($sender, $eventArgs)
+        $clip = [Rectangle]::Intersect($eventArgs.ClipRectangle, $overlay.ClientRectangle)
+        if ($clip.Width -eq 0 -or $clip.Height -eq 0) { return }
+        $g = $eventArgs.Graphics
+        $g.DrawImage($desktop, $clip, $clip, [GraphicsUnit]::Pixel)
         $r = $script:selection
         $shade = [SolidBrush]::new([Color]::FromArgb(150, 0, 0, 0))
-        $region = [Region]::new($overlay.ClientRectangle)
+        $region = [Region]::new($clip)
         $pen = [Pen]::new($accent, 2)
         try {
             $region.Exclude($r)
-            $eventArgs.Graphics.FillRegion($shade, $region)
+            $g.FillRegion($shade, $region)
             if ($r.Width -gt 0 -and $r.Height -gt 0) {
-                $eventArgs.Graphics.DrawRectangle($pen, $r)
+                $g.DrawRectangle($pen, $r)
                 foreach ($handle in (Get-Handles $r)) {
-                    $eventArgs.Graphics.FillRectangle([Brushes]::White, $handle.Box)
-                    $eventArgs.Graphics.DrawRectangle($pen, $handle.Box)
+                    $g.FillRectangle([Brushes]::White, $handle.Box)
+                    $g.DrawRectangle($pen, $handle.Box)
                 }
             }
         } finally { $pen.Dispose(); $region.Dispose(); $shade.Dispose() }
@@ -135,11 +152,10 @@ function Get-Crop($desktop, $bounds) {
         $actions.Hide()
         $overlay.Capture = $true
     })
-    $overlay.Add_MouseMove({
-        param($sender, $e)
-        if ($null -eq $script:drag) { return }
-        $x = [Math]::Max(0, [Math]::Min($overlay.ClientSize.Width, $e.X))
-        $y = [Math]::Max(0, [Math]::Min($overlay.ClientSize.Height, $e.Y))
+    function Update-CropSelection($location) {
+        $previous = $script:selection
+        $x = [Math]::Max(0, [Math]::Min($overlay.ClientSize.Width, $location.X))
+        $y = [Math]::Max(0, [Math]::Min($overlay.ClientSize.Height, $location.Y))
         $h = $script:drag.Handle
         if ($null -eq $h) {
             $script:selection = Get-Rectangle $script:drag.Start ([Point]::new($x, $y))
@@ -152,10 +168,23 @@ function Get-Crop($desktop, $bounds) {
             if ($h.Y -eq 1) { $bottom = [Math]::Max($y, $top + 1) }
             $script:selection = [Rectangle]::FromLTRB($left, $top, $right, $bottom)
         }
-        $overlay.Invalidate()
+        if (-not $previous.Equals($script:selection)) {
+            $dirty = $script:selection
+            if ($previous.Width -gt 0 -and $previous.Height -gt 0) {
+                $dirty = [Rectangle]::Union($previous, $dirty)
+            }
+            $dirty.Inflate(7, 7)
+            $overlay.Invalidate($dirty)
+        }
+    }
+    $overlay.Add_MouseMove({
+        param($sender, $e)
+        if ($null -ne $script:drag) { Update-CropSelection $e.Location }
     })
     $overlay.Add_MouseUp({
-        if ($null -eq $script:drag) { return }
+        param($sender, $e)
+        if ($e.Button -ne 'Left' -or $null -eq $script:drag) { return }
+        Update-CropSelection $e.Location
         $script:drag = $null
         $overlay.Capture = $false
         $r = $script:selection
@@ -194,6 +223,27 @@ function Get-Handles($rect) {
     }
 }
 
+function Get-ArrowShape($item) {
+    $dx = $item.B.X - $item.A.X
+    $dy = $item.B.Y - $item.A.Y
+    $length = [Math]::Sqrt($dx * $dx + $dy * $dy)
+    if ($length -eq 0) { return }
+    $ux = $dx / $length
+    $uy = $dy / $length
+    $headLength = [Math]::Min($length * 0.6, [Math]::Max(10.0, 4.0 * $item.Width))
+    $halfWidth = $headLength * 0.42
+    $baseX = $item.B.X - $ux * $headLength
+    $baseY = $item.B.Y - $uy * $headLength
+    @{
+        ShaftEnd = [PointF]::new($baseX + $ux * $headLength * 0.08, $baseY + $uy * $headLength * 0.08)
+        Head = [PointF[]]@(
+            [PointF]::new($item.B.X, $item.B.Y)
+            [PointF]::new($baseX - $uy * $halfWidth, $baseY + $ux * $halfWidth)
+            [PointF]::new($baseX + $uy * $halfWidth, $baseY - $ux * $halfWidth)
+        )
+    }
+}
+
 function Draw-Annotation($graphics, $item) {
     $pen = [Pen]::new($item.Color, $item.Width)
     $brush = [SolidBrush]::new($item.Color)
@@ -201,11 +251,10 @@ function Draw-Annotation($graphics, $item) {
         switch ($item.Kind) {
             'Rectángulo' { $graphics.DrawRectangle($pen, (Get-Rectangle $item.A $item.B)) }
             'Flecha' {
-                $cap = [System.Drawing.Drawing2D.AdjustableArrowCap]::new(3, 4)
-                try {
-                    $pen.CustomEndCap = $cap
-                    $graphics.DrawLine($pen, $item.A, $item.B)
-                } finally { $cap.Dispose() }
+                $arrow = Get-ArrowShape $item
+                if ($null -eq $arrow) { break }
+                $graphics.DrawLine($pen, [PointF]::new($item.A.X, $item.A.Y), $arrow.ShaftEnd)
+                $graphics.FillPolygon($brush, $arrow.Head)
             }
             'Línea' { $graphics.DrawLine($pen, $item.A, $item.B) }
             'Texto' { $graphics.DrawString($item.Text, $annotationFont, $brush, [PointF]::new($item.A.X, $item.A.Y)) }
@@ -242,6 +291,36 @@ function Test-AnnotationHit($item, $point) {
         return -not $inner.Contains($point)
     }
     $bounds.Contains($point)
+}
+
+function Get-EndpointHandle($endpoint, $view) {
+    [RectangleF]::new(
+        $view.X + $endpoint.X * $view.Scale - 5,
+        $view.Y + $endpoint.Y * $view.Scale - 5, 10, 10)
+}
+
+function Get-EndpointAt($item, $view, $location) {
+    $closest = $null
+    $distance = [double]::PositiveInfinity
+    foreach ($end in 'B', 'A') {
+        $box = Get-EndpointHandle $item[$end] $view
+        if (-not $box.Contains($location.X, $location.Y)) { continue }
+        $dx = $location.X - ($box.Left + 5)
+        $dy = $location.Y - ($box.Top + 5)
+        $candidate = $dx * $dx + $dy * $dy
+        if ($candidate -lt $distance) {
+            $closest = $end
+            $distance = $candidate
+        }
+    }
+    $closest
+}
+
+function Get-DraggedEndpoint($drag, $point, $imageSize) {
+    $origin = $drag[$drag.Endpoint]
+    [Point]::new(
+        [Math]::Max(0, [Math]::Min($imageSize.Width - 1, $origin.X + $point.X - $drag.Start.X)),
+        [Math]::Max(0, [Math]::Min($imageSize.Height - 1, $origin.Y + $point.Y - $drag.Start.Y)))
 }
 
 function Read-AnnotationText {
@@ -369,7 +448,7 @@ function Show-Editor($capture) {
     $delete = New-Button 'Eliminar' { Remove-SelectedAnnotation }
     $properties.Controls.Add($delete)
 
-    $canvas = [PictureBox]::new()
+    $canvas = [CaptureCanvas]::new()
     $canvas.Dock = 'Fill'
     $canvas.BackColor = [Color]::White
     $editor.Controls.Add($canvas)
@@ -418,20 +497,68 @@ function Show-Editor($capture) {
         }
     }
 
-    function Get-ImagePoint($location) {
-        $view = Get-CanvasView
+    function Get-ImagePoint($location, $view = (Get-CanvasView)) {
         if ($view.Scale -le 0) { return }
         [Point]::new([int][Math]::Floor(($location.X - $view.X) / $view.Scale),
                      [int][Math]::Floor(($location.Y - $view.Y) / $view.Scale))
     }
 
-    $canvas.Add_Resize({ $canvas.Invalidate() })
+    function Update-AnnotationDrag($location) {
+        $point = Get-ImagePoint $location
+        if ($null -eq $point) { return }
+        $item = $state.Selected
+        $drag = $state.Drag
+        if ($drag.Endpoint) {
+            $item[$drag.Endpoint] = Get-DraggedEndpoint $drag $point $capture.Size
+        } else {
+            $bounds = Get-AnnotationBounds $item
+            $minX = $bounds.Left - ($item.A.X - $drag.A.X)
+            $minY = $bounds.Top - ($item.A.Y - $drag.A.Y)
+            $maxX = [Math]::Max(-$minX, $capture.Width - $minX - [Math]::Max(1, $bounds.Width))
+            $maxY = [Math]::Max(-$minY, $capture.Height - $minY - [Math]::Max(1, $bounds.Height))
+            $dx = [Math]::Max(-$minX, [Math]::Min($maxX, $point.X - $drag.Start.X))
+            $dy = [Math]::Max(-$minY, [Math]::Min($maxY, $point.Y - $drag.Start.Y))
+            $item.A = [Point]::new($drag.A.X + $dx, $drag.A.Y + $dy)
+            $item.B = [Point]::new($drag.B.X + $dx, $drag.B.Y + $dy)
+        }
+        $canvas.Invalidate()
+    }
+
+    function Complete-AnnotationDrag($commit) {
+        $drag = $state.Drag
+        $item = $state.Selected
+        $valid = -not $item.A.Equals($item.B)
+        if ($item.Kind -eq 'Rectángulo') {
+            $valid = $item.A.X -ne $item.B.X -and $item.A.Y -ne $item.B.Y
+        } elseif ($item.Kind -eq 'Texto') {
+            $valid = $true
+        }
+
+        if (-not $commit -or -not $valid) {
+            if ($drag.Creating) {
+                [void]$items.Remove($item)
+                $state.Selected = $null
+            } else {
+                $item.A = $drag.A
+                $item.B = $drag.B
+            }
+        } elseif ($drag.Creating -or -not $item.A.Equals($drag.A) -or -not $item.B.Equals($drag.B)) {
+            $state.Modified = $true
+        }
+        if ($drag.Creating) { $state.Tool = 'Seleccionar' }
+        $state.Drag = $null
+        $canvas.Capture = $false
+        Update-Editor
+    }
+
     $canvas.Add_Paint({
         param($sender, $e)
         $view = Get-CanvasView
         if ($view.Scale -le 0) { return }
         $g = $e.Graphics
         $saved = $g.Save()
+        $selected = $state.Selected
+        $showHandles = $null -ne $selected -and $selected.Kind -in 'Línea', 'Flecha'
         try {
             $g.TranslateTransform([single]$view.X, [single]$view.Y)
             $g.ScaleTransform([single]$view.Scale, [single]$view.Scale)
@@ -439,8 +566,8 @@ function Show-Editor($capture) {
             $g.DrawImage($capture, 0, 0, $capture.Width, $capture.Height)
             $g.SmoothingMode = 'AntiAlias'
             foreach ($item in $items) { Draw-Annotation $g $item }
-            if ($null -ne $state.Selected) {
-                $bounds = Get-AnnotationBounds $state.Selected
+            if ($null -ne $selected -and -not $showHandles) {
+                $bounds = Get-AnnotationBounds $selected
                 $bounds.Inflate(5, 5)
                 $pen = [Pen]::new($accent, [single](1 / $view.Scale))
                 try {
@@ -449,13 +576,35 @@ function Show-Editor($capture) {
                 } finally { $pen.Dispose() }
             }
         } finally { $g.Restore($saved) }
+        if ($showHandles -and $null -eq $state.Drag) {
+            $pen = [Pen]::new($accent)
+            try {
+                foreach ($endpoint in $selected.A, $selected.B) {
+                    $box = Get-EndpointHandle $endpoint $view
+                    $g.FillRectangle([Brushes]::White, $box)
+                    $g.DrawRectangle($pen, $box.X, $box.Y, $box.Width, $box.Height)
+                }
+            } finally { $pen.Dispose() }
+        }
     })
     $canvas.Add_MouseDown({
         param($sender, $e)
-        if ($e.Button -ne 'Left') { return }
-        $point = Get-ImagePoint $e.Location
-        if ($null -eq $point -or $point.X -lt 0 -or $point.Y -lt 0 -or
-            $point.X -ge $capture.Width -or $point.Y -ge $capture.Height) {
+        if ($e.Button -ne 'Left' -or $null -ne $state.Drag) { return }
+        $view = Get-CanvasView
+        $point = Get-ImagePoint $e.Location $view
+        if ($null -eq $point) { return }
+
+        $selected = $state.Selected
+        if ($state.Tool -eq 'Seleccionar' -and $null -ne $selected -and $selected.Kind -in 'Línea', 'Flecha') {
+            $endpoint = Get-EndpointAt $selected $view $e.Location
+            if ($endpoint) {
+                $state.Drag = @{ Start = $point; A = $selected.A; B = $selected.B; Endpoint = $endpoint; Creating = $false }
+                $canvas.Capture = $true
+                $canvas.Invalidate()
+                return
+            }
+        }
+        if ($point.X -lt 0 -or $point.Y -lt 0 -or $point.X -ge $capture.Width -or $point.Y -ge $capture.Height) {
             $state.Selected = $null
             Update-Editor
             return
@@ -478,7 +627,7 @@ function Show-Editor($capture) {
                 $state.Modified = $true
             } else {
                 if ($state.Tool -eq 'Flecha') { $item.Color = [Color]::DarkOrange }
-                $state.Drag = @{ Start = $point; Creating = $true }
+                $state.Drag = @{ Start = $point; A = $point; B = $point; Endpoint = 'B'; Creating = $true }
             }
             $items.Add($item)
             $state.Selected = $item
@@ -488,52 +637,21 @@ function Show-Editor($capture) {
     })
     $canvas.Add_MouseMove({
         param($sender, $e)
-        if ($null -eq $state.Drag) { return }
-        $point = Get-ImagePoint $e.Location
-        if ($null -eq $point) { return }
-        $item = $state.Selected
-        if ($state.Drag.Creating) {
-            $item.B = [Point]::new(
-                [Math]::Max(0, [Math]::Min($capture.Width - 1, $point.X)),
-                [Math]::Max(0, [Math]::Min($capture.Height - 1, $point.Y)))
-        } else {
-            $drag = $state.Drag
-            $bounds = Get-AnnotationBounds $item
-            $minX = $bounds.Left - ($item.A.X - $drag.A.X)
-            $minY = $bounds.Top - ($item.A.Y - $drag.A.Y)
-            $maxX = [Math]::Max(-$minX, $capture.Width - $minX - [Math]::Max(1, $bounds.Width))
-            $maxY = [Math]::Max(-$minY, $capture.Height - $minY - [Math]::Max(1, $bounds.Height))
-            $dx = [Math]::Max(-$minX, [Math]::Min($maxX, $point.X - $drag.Start.X))
-            $dy = [Math]::Max(-$minY, [Math]::Min($maxY, $point.Y - $drag.Start.Y))
-            $nextA = [Point]::new($drag.A.X + $dx, $drag.A.Y + $dy)
-            if (-not $nextA.Equals($item.A)) {
-                $item.A = $nextA
-                $item.B = [Point]::new($drag.B.X + $dx, $drag.B.Y + $dy)
-                $state.Modified = $true
-            }
-        }
-        $canvas.Invalidate()
+        if ($null -ne $state.Drag) { Update-AnnotationDrag $e.Location }
     })
     $canvas.Add_MouseUp({
-        if ($null -eq $state.Drag) { return }
-        if ($state.Drag.Creating) {
-            $item = $state.Selected
-            if (($item.Kind -in 'Flecha', 'Línea' -and $item.A.Equals($item.B)) -or
-                ($item.Kind -eq 'Rectángulo' -and ($item.A.X -eq $item.B.X -or $item.A.Y -eq $item.B.Y))) {
-                [void]$items.Remove($item)
-                $state.Selected = $null
-            } else {
-                $state.Modified = $true
-            }
-            $state.Tool = 'Seleccionar'
-        }
-        $state.Drag = $null
-        $canvas.Capture = $false
-        Update-Editor
+        param($sender, $e)
+        if ($e.Button -ne 'Left' -or $null -eq $state.Drag) { return }
+        Update-AnnotationDrag $e.Location
+        Complete-AnnotationDrag $true
+    })
+    $canvas.Add_MouseCaptureChanged({
+        if ($null -ne $state.Drag -and -not $canvas.Capture) { Complete-AnnotationDrag $false }
     })
     $editor.Add_KeyDown({
         param($sender, $e)
         if ($e.KeyCode -eq 'Delete' -and $null -eq $state.Drag) { Remove-SelectedAnnotation }
+        if ($e.KeyCode -eq 'Escape' -and $null -ne $state.Drag) { Complete-AnnotationDrag $false }
     })
     $editor.Add_FormClosing({
         param($sender, $e)
