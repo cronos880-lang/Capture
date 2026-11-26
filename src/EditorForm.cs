@@ -288,12 +288,6 @@ namespace Capture
             Theme.ApplyDarkTitleBar(Handle);
         }
 
-        protected override void OnFormClosing(FormClosingEventArgs e)
-        {
-            if (e.CloseReason == CloseReason.UserClosing && !ConfirmDiscard()) e.Cancel = true;
-            base.OnFormClosing(e);
-        }
-
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
             if (canvas.HasImage && !(ActiveControl is NumericUpDown))

@@ -91,8 +91,8 @@ namespace Capture
             menu.Items.Add("Salir").Click += delegate
             {
                 if (Busy) return;
-                if (editor.IsHandleCreated) editor.Close();
-                else ExitThread();
+                if (!editor.IsHandleCreated) ExitThread();
+                else if (editor.ConfirmDiscard()) editor.Close();
             };
 
             tray = new NotifyIcon { Icon = icon, ContextMenuStrip = menu, Visible = true };
