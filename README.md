@@ -1,6 +1,6 @@
 # Capture
 
-Aplicación pequeña de escritorio para Windows que permite **capturar una zona de la pantalla y explicarla en la propia imagen con flechas y texto**. «Captura y anota» es el nombre provisional que aparece en las maquetas. El proyecto está en **fase de diseño visual**.
+Aplicación pequeña de escritorio para Windows que permite **capturar una zona de la pantalla y explicarla en la propia imagen con flechas y texto**. «Captura y anota» es el nombre provisional que aparece en las maquetas. El repositorio conserva las maquetas iniciales y una versión de prueba para Windows.
 
 ## Flujo de trabajo
 
@@ -22,15 +22,17 @@ La barra superior reúne **Seleccionar**, **Rectángulo**, **Flecha** y **Texto*
 
 ![Editor de captura con un rectángulo, una flecha, textos y selector de color](docs/maquetas/02-anotar-captura.png)
 
-Las imágenes son maquetas generadas para visualizar el flujo y usan contenido de ejemplo. La revisión del diseño precede a la implementación.
+Las imágenes son las maquetas iniciales del flujo y usan contenido de ejemplo.
 
-## Primera versión de prueba
+## Versión de prueba con atajo y línea
 
-En Windows 10 (versión 1703 o posterior) o Windows 11, abre `Iniciar-Capture.cmd` desde el Explorador. Usa Windows PowerShell 5.1 y Windows Forms, incluidos en Windows. El lanzador aplica la política de ejecución solo a su proceso.
+En Windows 10 (versión 1703 o posterior) o Windows 11, abre `Iniciar-Capture.cmd` desde el Explorador. Capture queda disponible en el área de notificación, junto al reloj. Usa Windows PowerShell 5.1 y Windows Forms, incluidos en Windows. El lanzador aplica la política de ejecución solo a su proceso.
 
+- Abre la aplicación o el escritorio que quieras capturar y pulsa **Ctrl+Alt+R**. También puedes abrir el menú del icono de Capture y elegir **Nueva captura**, incluso si otra aplicación ya está usando el atajo. Si el icono está oculto, despliega la flecha junto al reloj.
 - Arrastra para seleccionar un área y ajusta sus bordes con los tiradores. Confirma con **Capturar** o **Intro**. **Esc** cancela.
-- Usa **Rectángulo**, **Flecha** o **Texto**. Al terminar, el editor vuelve a **Seleccionar**. Puedes arrastrar una anotación, cambiar su color, ajustar el grosor de las formas o eliminarla.
+- Usa **Rectángulo**, **Flecha**, **Línea** o **Texto**. **Línea** dibuja un segmento recto sin punta. Al terminar, el editor vuelve a **Seleccionar**. Puedes arrastrar una anotación, cambiar su color, ajustar el grosor de las formas o eliminarla.
 - **Copiar** lleva la imagen anotada al portapapeles. **Guardar** genera un PNG con las dimensiones del recorte.
-- **Nueva captura** abre otra selección. Guarda o copia la captura actual antes de usarla si quieres conservarla.
+- **Nueva captura** también está disponible en el editor. Al cancelar el recorte, vuelve la captura anterior. Capture pide confirmación si vas a descartar cambios de anotación que todavía no has copiado ni guardado.
+- Para cerrar el programa y liberar el atajo, elige **Salir** en el menú del icono junto al reloj.
 
 En esta iteración el texto se añade en una sola línea y el lienzo ajusta la imagen al espacio disponible. La prueba de pantalla, escalado, portapapeles y guardado requiere una sesión gráfica de Windows.

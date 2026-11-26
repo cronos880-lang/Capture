@@ -7,12 +7,54 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
+using System.Windows.Forms;
 
 public static class CaptureDisplay {
     [DllImport("user32.dll")]
     public static extern bool SetProcessDpiAwarenessContext(IntPtr context);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowEnabled(IntPtr window);
 }
-'@
+
+public sealed class CaptureHotKey : NativeWindow, IDisposable {
+    private const int HotKeyId = 1;
+    private const int HotKeyMessage = 0x0312;
+    private const uint ControlAltNoRepeat = 0x4003;
+
+    [DllImport("user32.dll")]
+    private static extern bool RegisterHotKey(IntPtr window, int id, uint modifiers, uint key);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnregisterHotKey(IntPtr window, int id);
+
+    public event EventHandler Pressed;
+    public bool Registered { get; private set; }
+
+    public CaptureHotKey() {
+        var parameters = new CreateParams { Parent = new IntPtr(-3) }; // HWND_MESSAGE
+        CreateHandle(parameters);
+        Registered = RegisterHotKey(Handle, HotKeyId, ControlAltNoRepeat, (uint)Keys.R);
+    }
+
+    protected override void WndProc(ref Message message) {
+        if (message.Msg == HotKeyMessage && message.WParam.ToInt32() == HotKeyId) {
+            var handler = Pressed;
+            if (handler != null) handler(this, EventArgs.Empty);
+            return;
+        }
+        base.WndProc(ref message);
+    }
+
+    public void Dispose() {
+        if (Registered) {
+            UnregisterHotKey(Handle, HotKeyId);
+            Registered = false;
+        }
+        DestroyHandle();
+    }
+}
+'@ -ReferencedAssemblies System.Windows.Forms -ErrorAction Stop
 [void][CaptureDisplay]::SetProcessDpiAwarenessContext([IntPtr](-4))
 [Application]::EnableVisualStyles()
 
@@ -41,6 +83,7 @@ function Get-Crop($desktop, $bounds) {
     $overlay.FormBorderStyle = 'None'
     $overlay.Bounds = $bounds
     $overlay.TopMost = $true
+    $overlay.ShowInTaskbar = $false
     $overlay.KeyPreview = $true
     $overlay.Font = $font
     $overlay.BackgroundImage = $desktop
@@ -154,17 +197,20 @@ function Get-Handles($rect) {
 function Draw-Annotation($graphics, $item) {
     $pen = [Pen]::new($item.Color, $item.Width)
     $brush = [SolidBrush]::new($item.Color)
-    $cap = [System.Drawing.Drawing2D.AdjustableArrowCap]::new(3, 4)
     try {
         switch ($item.Kind) {
             'Rectángulo' { $graphics.DrawRectangle($pen, (Get-Rectangle $item.A $item.B)) }
             'Flecha' {
-                $pen.CustomEndCap = $cap
-                $graphics.DrawLine($pen, $item.A, $item.B)
+                $cap = [System.Drawing.Drawing2D.AdjustableArrowCap]::new(3, 4)
+                try {
+                    $pen.CustomEndCap = $cap
+                    $graphics.DrawLine($pen, $item.A, $item.B)
+                } finally { $cap.Dispose() }
             }
+            'Línea' { $graphics.DrawLine($pen, $item.A, $item.B) }
             'Texto' { $graphics.DrawString($item.Text, $annotationFont, $brush, [PointF]::new($item.A.X, $item.A.Y)) }
         }
-    } finally { $pen.Dispose(); $brush.Dispose(); $cap.Dispose() }
+    } finally { $pen.Dispose(); $brush.Dispose() }
 }
 
 function Get-AnnotationBounds($item) {
@@ -176,7 +222,7 @@ function Get-AnnotationBounds($item) {
 }
 
 function Test-AnnotationHit($item, $point) {
-    if ($item.Kind -eq 'Flecha') {
+    if ($item.Kind -in 'Flecha', 'Línea') {
         $dx = $item.B.X - $item.A.X
         $dy = $item.B.Y - $item.A.Y
         $lengthSquared = $dx * $dx + $dy * $dy
@@ -227,6 +273,7 @@ function Export-Capture($destination) {
         if ($destination -eq 'Clipboard') {
             [Clipboard]::SetImage($bitmap)
             $status.Text = 'Captura copiada'
+            $state.Modified = $false
         } else {
             $dialog = [SaveFileDialog]::new()
             $dialog.Filter = 'Imagen PNG (*.png)|*.png'
@@ -236,6 +283,7 @@ function Export-Capture($destination) {
                 if ($dialog.ShowDialog($editor) -eq 'OK') {
                     $bitmap.Save($dialog.FileName, [System.Drawing.Imaging.ImageFormat]::Png)
                     $status.Text = 'Captura guardada'
+                    $state.Modified = $false
                 }
             } finally { $dialog.Dispose() }
         }
@@ -254,7 +302,7 @@ function Show-Editor($capture) {
     $editor.Font = $font
     $annotationFont = [Font]::new('Segoe UI', 22, [FontStyle]::Regular, [GraphicsUnit]::Pixel)
     $items = [List[object]]::new()
-    $state = @{ Tool = 'Seleccionar'; Selected = $null; Drag = $null; Synchronizing = $false; NewCapture = $false }
+    $state = @{ Tool = 'Seleccionar'; Selected = $null; Drag = $null; Synchronizing = $false; Modified = $false }
 
     $toolbar = [FlowLayoutPanel]::new()
     $toolbar.Dock = 'Top'
@@ -262,7 +310,7 @@ function Show-Editor($capture) {
     $toolbar.Height = 52
     $toolbar.WrapContents = $false
     $tools = @{}
-    foreach ($name in 'Seleccionar', 'Rectángulo', 'Flecha', 'Texto') {
+    foreach ($name in 'Seleccionar', 'Rectángulo', 'Flecha', 'Línea', 'Texto') {
         $button = New-Button $name {
             param($sender, $e)
             $state.Tool = $sender.Text
@@ -274,7 +322,7 @@ function Show-Editor($capture) {
     }
     $toolbar.Controls.Add((New-Button 'Copiar' { Export-Capture 'Clipboard' }))
     $toolbar.Controls.Add((New-Button 'Guardar' { Export-Capture 'File' }))
-    $toolbar.Controls.Add((New-Button 'Nueva captura' { $state.NewCapture = $true; $editor.Close() }))
+    $toolbar.Controls.Add((New-Button 'Nueva captura' { Request-Capture }))
 
     $status = [Label]::new()
     $status.Dock = 'Bottom'
@@ -297,6 +345,7 @@ function Show-Editor($capture) {
         try {
             if ($dialog.ShowDialog($editor) -eq 'OK') {
                 $state.Selected.Color = $dialog.Color
+                $state.Modified = $true
                 Update-Editor
             }
         } finally { $dialog.Dispose() }
@@ -313,6 +362,7 @@ function Show-Editor($capture) {
     $width.Add_ValueChanged({
         if ($null -eq $state.Selected -or $state.Synchronizing) { return }
         $state.Selected.Width = [int]$width.Value
+        $state.Modified = $true
         $canvas.Invalidate()
     })
     $properties.Controls.Add($width)
@@ -354,6 +404,7 @@ function Show-Editor($capture) {
         if ($null -eq $state.Selected) { return }
         [void]$items.Remove($state.Selected)
         $state.Selected = $null
+        $state.Modified = $true
         Update-Editor
     }
 
@@ -424,6 +475,7 @@ function Show-Editor($capture) {
                 $item.Text = Read-AnnotationText
                 if ([string]::IsNullOrWhiteSpace($item.Text)) { return }
                 $state.Tool = 'Seleccionar'
+                $state.Modified = $true
             } else {
                 if ($state.Tool -eq 'Flecha') { $item.Color = [Color]::DarkOrange }
                 $state.Drag = @{ Start = $point; Creating = $true }
@@ -453,8 +505,12 @@ function Show-Editor($capture) {
             $maxY = [Math]::Max(-$minY, $capture.Height - $minY - [Math]::Max(1, $bounds.Height))
             $dx = [Math]::Max(-$minX, [Math]::Min($maxX, $point.X - $drag.Start.X))
             $dy = [Math]::Max(-$minY, [Math]::Min($maxY, $point.Y - $drag.Start.Y))
-            $item.A = [Point]::new($drag.A.X + $dx, $drag.A.Y + $dy)
-            $item.B = [Point]::new($drag.B.X + $dx, $drag.B.Y + $dy)
+            $nextA = [Point]::new($drag.A.X + $dx, $drag.A.Y + $dy)
+            if (-not $nextA.Equals($item.A)) {
+                $item.A = $nextA
+                $item.B = [Point]::new($drag.B.X + $dx, $drag.B.Y + $dy)
+                $state.Modified = $true
+            }
         }
         $canvas.Invalidate()
     })
@@ -462,9 +518,12 @@ function Show-Editor($capture) {
         if ($null -eq $state.Drag) { return }
         if ($state.Drag.Creating) {
             $item = $state.Selected
-            if (($item.Kind -eq 'Flecha' -and $item.A.Equals($item.B)) -or
+            if (($item.Kind -in 'Flecha', 'Línea' -and $item.A.Equals($item.B)) -or
                 ($item.Kind -eq 'Rectángulo' -and ($item.A.X -eq $item.B.X -or $item.A.Y -eq $item.B.Y))) {
-                Remove-SelectedAnnotation
+                [void]$items.Remove($item)
+                $state.Selected = $null
+            } else {
+                $state.Modified = $true
             }
             $state.Tool = 'Seleccionar'
         }
@@ -476,30 +535,141 @@ function Show-Editor($capture) {
         param($sender, $e)
         if ($e.KeyCode -eq 'Delete' -and $null -eq $state.Drag) { Remove-SelectedAnnotation }
     })
+    $editor.Add_FormClosing({
+        param($sender, $e)
+        if ($e.CloseReason -ne 'UserClosing' -or -not $state.Modified) { return }
+        Restore-CaptureEditor
+        $answer = [MessageBox]::Show($editor, '¿Descartar los cambios de la captura actual?', 'Capture',
+            [MessageBoxButtons]::YesNo, [MessageBoxIcon]::Question, [MessageBoxDefaultButton]::Button2)
+        if ($answer -eq 'Yes') { return }
+        $e.Cancel = $true
+        $appState.ExitRequested = $false
+        if ($null -ne $appState.NextCapture) {
+            $appState.NextCapture.Dispose()
+            $appState.NextCapture = $null
+        }
+    })
     Update-Editor
+    $appState.Editor = $editor
     try { [void]$editor.ShowDialog() }
-    finally { $editor.Dispose(); $annotationFont.Dispose() }
-    $state.NewCapture
+    finally {
+        $appState.Editor = $null
+        $editor.Dispose()
+        $annotationFont.Dispose()
+    }
 }
 
-try {
-    do {
-        $script:selection = [Rectangle]::Empty
-        $script:drag = $null
-        $desktopBounds = [SystemInformation]::VirtualScreen
-        $desktop = [Bitmap]::new($desktopBounds.Width, $desktopBounds.Height)
+function Get-ScreenCapture {
+    $script:selection = [Rectangle]::Empty
+    $script:drag = $null
+    $desktopBounds = [SystemInformation]::VirtualScreen
+    $desktop = [Bitmap]::new($desktopBounds.Width, $desktopBounds.Height)
+    try {
+        $graphics = [Graphics]::FromImage($desktop)
         try {
-            $graphics = [Graphics]::FromImage($desktop)
-            try {
-                $graphics.CopyFromScreen($desktopBounds.Location, [Point]::Empty, $desktopBounds.Size)
-            } finally { $graphics.Dispose() }
-            $capture = Get-Crop $desktop $desktopBounds
-        } finally { $desktop.Dispose() }
-        if ($null -eq $capture) { break }
-        try { $again = Show-Editor $capture }
-        finally { $capture.Dispose() }
-    } while ($again)
+            $graphics.CopyFromScreen($desktopBounds.Location, [Point]::Empty, $desktopBounds.Size)
+        } finally { $graphics.Dispose() }
+        Get-Crop $desktop $desktopBounds
+    } finally { $desktop.Dispose() }
+}
+
+function Restore-CaptureEditor {
+    if ($null -ne $appState.WindowState -and $null -ne $appState.Editor) {
+        $appState.Editor.WindowState = $appState.WindowState
+    }
+    $appState.WindowState = $null
+}
+
+function Request-Capture {
+    if ($appState.Selecting -or $captureTimer.Enabled -or $appState.ExitRequested -or
+        $null -ne $appState.NextCapture) { return }
+    $window = $appState.Editor
+    if ($null -ne $window) {
+        if (-not [CaptureDisplay]::IsWindowEnabled($window.Handle)) { return }
+        $appState.WindowState = $window.WindowState
+        $window.WindowState = 'Minimized'
+    }
+    $captureTimer.Start()
+}
+
+function Invoke-CaptureRequest {
+    $captureTimer.Stop()
+    $appState.Selecting = $true
+    try {
+        $next = Get-ScreenCapture
+    } catch {
+        [void][MessageBox]::Show($_.Exception.Message, 'Error de captura')
+    } finally {
+        $appState.Selecting = $false
+    }
+    if ($null -eq $next) {
+        Restore-CaptureEditor
+        return
+    }
+    if ($null -ne $appState.Editor) {
+        $appState.NextCapture = $next
+        $appState.Editor.Close()
+        $appState.WindowState = $null
+        return
+    }
+
+    while ($null -ne $next) {
+        $appState.NextCapture = $null
+        try { Show-Editor $next }
+        finally { $next.Dispose() }
+        $next = $appState.NextCapture
+    }
+    if ($appState.ExitRequested) { $context.ExitThread() }
+}
+
+$appState = @{ Editor = $null; WindowState = $null; NextCapture = $null; Selecting = $false; ExitRequested = $false }
+$context = [ApplicationContext]::new()
+$captureTimer = [Timer]::new()
+$captureTimer.Interval = 250
+$captureTimer.Add_Tick({ Invoke-CaptureRequest })
+
+$hotKey = [CaptureHotKey]::new()
+$hotKey.Add_Pressed({ Request-Capture })
+$menu = [ContextMenuStrip]::new()
+$captureMenu = $menu.Items.Add('Nueva captura')
+$captureMenu.Add_Click({ Request-Capture })
+if ($hotKey.Registered) {
+    $captureMenu.ShortcutKeyDisplayString = 'Ctrl+Alt+R'
+}
+$exitMenu = $menu.Items.Add('Salir')
+$exitMenu.Add_Click({
+    if ($appState.Selecting -or $null -ne $appState.NextCapture) { return }
+    $window = $appState.Editor
+    if ($null -ne $window -and -not [CaptureDisplay]::IsWindowEnabled($window.Handle)) { return }
+    $captureTimer.Stop()
+    Restore-CaptureEditor
+    $appState.ExitRequested = $true
+    if ($null -ne $window) { $window.Close() }
+    else { $context.ExitThread() }
+})
+
+$tray = [NotifyIcon]::new()
+$tray.Icon = [SystemIcons]::Application
+$tray.Text = 'Capture'
+$tray.ContextMenuStrip = $menu
+$tray.Add_DoubleClick({ Request-Capture })
+try {
+    $tray.Visible = $true
+    $message = 'Abre el menú de Capture y elige Nueva captura.'
+    if ($hotKey.Registered) {
+        $tray.Text = 'Capture (Ctrl+Alt+R)'
+        $message = 'Pulsa Ctrl+Alt+R para seleccionar una zona.'
+    }
+    $tray.ShowBalloonTip(3500, 'Capture listo', $message, [ToolTipIcon]::Info)
+    [Application]::Run($context)
 } catch {
     [void][MessageBox]::Show($_.Exception.Message, 'Capture')
     exit 1
-} finally { $font.Dispose() }
+} finally {
+    $tray.Dispose()
+    $menu.Dispose()
+    $hotKey.Dispose()
+    $captureTimer.Dispose()
+    $context.Dispose()
+    $font.Dispose()
+}
