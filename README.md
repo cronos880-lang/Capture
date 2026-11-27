@@ -34,7 +34,7 @@ sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0
 
 Extrae el ZIP de Linux en una carpeta permanente. Desde esa carpeta ejecuta `./Capture`. Tu gestor de archivos también puede abrir el lanzador si permite ejecutar archivos de texto.
 
-- **Nueva captura** abre el selector. En **X11**, arrastra en el monitor donde tienes el puntero, ajusta el recorte y confirma con **Capturar** o **Intro**. En **Wayland**, elige la región en el diálogo del escritorio si su portal de captura ofrece esa opción.
+- **Nueva captura** abre el selector. En **X11**, la cruz blanca con contorno oscuro destaca sobre fondos claros y oscuros. Arrastra en el monitor donde tienes el puntero, ajusta el recorte y confirma con **Capturar** o **Intro**. En **Wayland**, elige la región en el diálogo del escritorio si su portal de captura ofrece esa opción.
 - Selecciona **Rectángulo**, **Flecha**, **Línea** o **Texto**. Para la flecha, pulsa donde quieras dejar la punta y arrastra el trazo. **Ajustes** reúne el color, el grosor, el tamaño y la negrita según la herramienta. Conserva el mismo encuadre al abrirlo.
 - **Copiar** lleva la imagen anotada al portapapeles y **Guardar PNG** conserva los píxeles del recorte. La disponibilidad del portapapeles tras cerrar depende de tu escritorio. La **X** cierra Capture directamente y descarta los cambios pendientes.
 - En el menú de Capture, usa **Añadir al menú de aplicaciones** para crear el acceso y **Iniciar al entrar en Linux** para activar o desactivar el arranque con tu sesión. Puedes añadir el acceso a los favoritos desde el escritorio.

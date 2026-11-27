@@ -111,8 +111,8 @@ class RegionWindow:
         self.canvas.connect("button-press-event", self.press)
         self.canvas.connect("motion-notify-event", self.move)
         self.canvas.connect("button-release-event", self.release)
-        self.canvas.connect("realize", lambda widget: widget.get_window().set_cursor(
-            Gdk.Cursor.new_from_name(widget.get_display(), "crosshair")))
+        self.canvas.connect("realize", self.update_cursor)
+        self.canvas.connect("notify::scale-factor", self.update_cursor)
         overlay.add(self.canvas)
 
         self.hint = Gtk.Label(label="Arrastra para seleccionar un área")
@@ -145,6 +145,28 @@ class RegionWindow:
     def show(self):
         self.window.show_all()
         self.window.present()
+
+    def update_cursor(self, widget, *_args):
+        window = widget.get_window()
+        if window is None:
+            return
+        scale = widget.get_scale_factor()
+        size, center = 32, 16
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, size * scale, size * scale)
+        surface.set_device_scale(scale, scale)
+        context = cairo.Context(surface)
+        context.move_to(center - 12, center)
+        context.line_to(center + 12, center)
+        context.move_to(center, center - 12)
+        context.line_to(center, center + 12)
+        context.set_line_cap(cairo.LINE_CAP_SQUARE)
+        context.set_source_rgb(0.03, 0.04, 0.06)
+        context.set_line_width(6)
+        context.stroke_preserve()
+        context.set_source_rgb(1, 1, 1)
+        context.set_line_width(2)
+        context.stroke()
+        window.set_cursor(Gdk.Cursor.new_from_surface(widget.get_display(), surface, center, center))
 
     def relative(self, point):
         size = self.canvas.get_allocation()
