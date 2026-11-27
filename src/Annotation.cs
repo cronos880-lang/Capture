@@ -3,7 +3,7 @@ using System.Drawing;
 
 namespace Capture
 {
-    enum Tool { Select, Rectangle, Arrow, Line, Text }
+    enum Tool { Select, Rectangle, Ellipse, Arrow, Line, Text }
 
     sealed class AnnotationStyle
     {
@@ -36,13 +36,14 @@ namespace Capture
         }
 
         public bool IsSegment { get { return Kind == Tool.Arrow || Kind == Tool.Line; } }
+        public bool IsClosedShape { get { return Kind == Tool.Rectangle || Kind == Tool.Ellipse; } }
 
         public bool Valid
         {
             get
             {
                 if (IsSegment) return Start != End;
-                if (Kind == Tool.Rectangle) return Start.X != End.X && Start.Y != End.Y;
+                if (IsClosedShape) return Start.X != End.X && Start.Y != End.Y;
                 return !string.IsNullOrWhiteSpace(Text);
             }
         }
@@ -69,6 +70,7 @@ namespace Capture
                 using (var pen = new Pen(Style.Color, Style.StrokeWidth))
                 {
                     if (Kind == Tool.Rectangle) g.DrawRectangle(pen, Bounds);
+                    else if (Kind == Tool.Ellipse) g.DrawEllipse(pen, Bounds);
                     else if (Kind == Tool.Line) g.DrawLine(pen, Start, End);
                     else
                     {
@@ -116,12 +118,30 @@ namespace Capture
                 return outer.Contains(point) && !inside.Contains(point);
             }
 
+            if (Kind == Tool.Ellipse)
+            {
+                Rectangle box = Bounds;
+                if (box.Width == 0 || box.Height == 0) return false;
+                double radiusX = box.Width / 2.0, radiusY = box.Height / 2.0;
+                double offsetX = point.X - box.Left - radiusX, offsetY = point.Y - box.Top - radiusY;
+                return InsideEllipse(offsetX, offsetY, radiusX + tolerance, radiusY + tolerance) &&
+                    !InsideEllipse(offsetX, offsetY, radiusX - tolerance, radiusY - tolerance);
+            }
+
             double dx = (double)End.X - Start.X, dy = (double)End.Y - Start.Y;
             double lengthSquared = dx * dx + dy * dy;
             if (lengthSquared == 0) return false;
             double t = Math.Max(0, Math.Min(1, ((point.X - Start.X) * dx + (point.Y - Start.Y) * dy) / lengthSquared));
             double x = point.X - Start.X - t * dx, y = point.Y - Start.Y - t * dy;
             return x * x + y * y <= tolerance * tolerance;
+        }
+
+        static bool InsideEllipse(double x, double y, double radiusX, double radiusY)
+        {
+            if (radiusX <= 0 || radiusY <= 0) return false;
+            x /= radiusX;
+            y /= radiusY;
+            return x * x + y * y <= 1;
         }
     }
 
@@ -145,6 +165,20 @@ namespace Capture
         {
             return Rectangle.FromLTRB(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y),
                 Math.Max(a.X, b.X), Math.Max(a.Y, b.Y));
+        }
+
+        public static Rectangle EllipseFromCenter(Point center, Point pointer, Size image)
+        {
+            if (pointer == center) return new Rectangle(center, Size.Empty);
+
+            // An axis-aligned drag still needs a visible radius on its other axis.
+            const int minimumRadius = 4;
+            int maxX = Math.Min(center.X, image.Width - 1 - center.X);
+            int maxY = Math.Min(center.Y, image.Height - 1 - center.Y);
+            int radiusX = Math.Min(maxX, Math.Max(minimumRadius, Math.Abs(pointer.X - center.X)));
+            int radiusY = Math.Min(maxY, Math.Max(minimumRadius, Math.Abs(pointer.Y - center.Y)));
+            return Rectangle.FromLTRB(center.X - radiusX, center.Y - radiusY,
+                center.X + radiusX, center.Y + radiusY);
         }
 
         public static Rectangle AdjustSelection(Rectangle original, Point handle, Point start, Point location, Size size)

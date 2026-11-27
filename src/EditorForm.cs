@@ -249,6 +249,7 @@ namespace Capture
             switch (tool)
             {
                 case Tool.Rectangle: return "Rectángulo";
+                case Tool.Ellipse: return "Elipse";
                 case Tool.Arrow: return "Flecha";
                 case Tool.Line: return "Línea";
                 case Tool.Text: return "Texto";
@@ -337,6 +338,7 @@ namespace Capture
             string dimensions = hasImage ? string.Format("{0} × {1} px", canvas.ImageSize.Width, canvas.ImageSize.Height) : "";
             string shapeSize = MeasureShape(selected);
             string usage = canvas.ActiveTool == Tool.Arrow ? "Pulsa donde irá la punta y arrastra para extender el trazo."
+                : canvas.ActiveTool == Tool.Ellipse ? "Pulsa donde irá el centro y arrastra para dar forma a la elipse."
                 : canvas.Selected != null && canvas.Selected.IsSegment ? "Arrastra un extremo para ajustar el trazo." : hotKeyLabel;
             string message = notice ?? usage;
             string details = shapeSize.Length == 0 ? dimensions : dimensions + "    ·    " + shapeSize;

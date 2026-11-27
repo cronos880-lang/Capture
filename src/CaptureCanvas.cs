@@ -14,7 +14,7 @@ namespace Capture
         sealed class Drag
         {
             public Point Pointer, Start, End;
-            public Point RectangleHandle;
+            public Point ResizeHandle;
             public Endpoint Part;
             public bool Creating;
         }
@@ -23,6 +23,7 @@ namespace Capture
         readonly Dictionary<Tool, AnnotationStyle> defaults = new Dictionary<Tool, AnnotationStyle>
         {
             { Tool.Rectangle, new AnnotationStyle() },
+            { Tool.Ellipse, new AnnotationStyle() },
             { Tool.Arrow, new AnnotationStyle { Color = Color.FromArgb(209, 74, 19) } },
             { Tool.Line, new AnnotationStyle() },
             { Tool.Text, new AnnotationStyle() }
@@ -169,9 +170,9 @@ namespace Capture
                 bounds.Top + (direction.Y + 1) * bounds.Height / 2);
         }
 
-        Point PickRectangleHandle(Point cursor, RectangleF view)
+        Point PickResizeHandle(Point cursor, RectangleF view)
         {
-            if (Selected == null || Selected.Kind != Tool.Rectangle) return Point.Empty;
+            if (Selected == null || !Selected.IsClosedShape) return Point.Empty;
             Point closest = Point.Empty;
             var distance = double.PositiveInfinity;
             foreach (var direction in RectangleHandles)
@@ -215,9 +216,9 @@ namespace Capture
             g.DrawImage(image, 0, 0, image.Width, image.Height);
             DrawAnnotations(g);
 
-            if (Selected != null && Selected.Kind == Tool.Text)
+            if (Selected != null && (Selected.Kind == Tool.Text || Selected.Kind == Tool.Ellipse))
             {
-                RectangleF bounds = TextBounds(Selected);
+                RectangleF bounds = Selected.Kind == Tool.Text ? TextBounds(Selected) : Selected.Bounds;
                 bounds.Inflate(4 / ratio, 4 / ratio);
                 using (var pen = new Pen(Theme.Accent, 1 / ratio) { DashStyle = DashStyle.Dash })
                     g.DrawRectangle(pen, bounds.X, bounds.Y, bounds.Width, bounds.Height);
@@ -233,7 +234,7 @@ namespace Capture
                         DrawHandle(g, HandleBox(Selected.Start, view), pen);
                         DrawHandle(g, HandleBox(Selected.End, view), pen);
                     }
-                    else if (Selected.Kind == Tool.Rectangle)
+                    else if (Selected.IsClosedShape)
                         foreach (var direction in RectangleHandles)
                             DrawHandle(g, HandleBox(RectangleHandlePosition(Selected.Bounds, direction), view), pen);
                 }
@@ -264,10 +265,10 @@ namespace Capture
 
             if (ActiveTool == Tool.Select)
             {
-                Point rectangleHandle = PickRectangleHandle(e.Location, view);
-                if (rectangleHandle != Point.Empty)
+                Point resizeHandle = PickResizeHandle(e.Location, view);
+                if (resizeHandle != Point.Empty)
                 {
-                    StartDrag(pixel, Endpoint.Body, false, rectangleHandle);
+                    StartDrag(pixel, Endpoint.Body, false, resizeHandle);
                     return;
                 }
                 Endpoint endpoint = PickEndpoint(e.Location, view);
@@ -311,12 +312,12 @@ namespace Capture
             }
         }
 
-        void StartDrag(Point pointer, Endpoint endpoint, bool creating, Point rectangleHandle = default(Point))
+        void StartDrag(Point pointer, Endpoint endpoint, bool creating, Point resizeHandle = default(Point))
         {
             drag = new Drag
             {
                 Pointer = pointer, Start = Selected.Start, End = Selected.End, Part = endpoint,
-                Creating = creating, RectangleHandle = rectangleHandle
+                Creating = creating, ResizeHandle = resizeHandle
             };
             Capture = true;
             Changed();
@@ -330,7 +331,7 @@ namespace Capture
             {
                 var view = View();
                 Cursor = !view.IsEmpty && (PickEndpoint(e.Location, view) != Endpoint.Body ||
-                    PickRectangleHandle(e.Location, view) != Point.Empty) ? Cursors.Hand : Cursors.Default;
+                    PickResizeHandle(e.Location, view) != Point.Empty) ? Cursors.Hand : Cursors.Default;
             }
         }
 
@@ -340,11 +341,19 @@ namespace Capture
             if (view.IsEmpty) return;
             Point point = ImagePoint(location, view);
             int dx = point.X - drag.Pointer.X, dy = point.Y - drag.Pointer.Y;
-            if (drag.RectangleHandle != Point.Empty)
+            if (drag.Creating && Selected.Kind == Tool.Ellipse)
+            {
+                Rectangle ellipse = Geometry.EllipseFromCenter(drag.Pointer, point, image.Size);
+                Selected.Start = ellipse.Location;
+                Selected.End = new Point(ellipse.Right, ellipse.Bottom);
+                Invalidate();
+                return;
+            }
+            if (drag.ResizeHandle != Point.Empty)
             {
                 var original = Geometry.Between(drag.Start, drag.End);
-                var corner = RectangleHandlePosition(original, drag.RectangleHandle);
-                var resized = Geometry.AdjustSelection(original, drag.RectangleHandle, drag.Pointer,
+                var corner = RectangleHandlePosition(original, drag.ResizeHandle);
+                var resized = Geometry.AdjustSelection(original, drag.ResizeHandle, drag.Pointer,
                     new Point(corner.X + dx, corner.Y + dy), new Size(image.Width - 1, image.Height - 1));
                 if (resized == original)
                 {
