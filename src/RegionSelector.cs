@@ -14,6 +14,7 @@ namespace Capture
         readonly Rectangle desktopBounds;
         readonly Bitmap desktop;
         readonly LayeredFrame frame;
+        readonly SelectionCrosshair crosshair;
         readonly Font instructionFont = new Font("Segoe UI", 11, FontStyle.Regular, GraphicsUnit.Pixel);
         readonly Font actionFont = new Font("Segoe UI", 13, FontStyle.Bold, GraphicsUnit.Pixel);
         readonly Rectangle hintBounds;
@@ -34,11 +35,17 @@ namespace Capture
             AutoScaleMode = AutoScaleMode.None;
             Bounds = bounds;
             KeyPreview = true;
-            Cursor = Cursors.Cross;
             hintBounds = HintBounds();
-            try { frame = new LayeredFrame(bounds.Size); }
+            try
+            {
+                frame = new LayeredFrame(bounds.Size);
+                crosshair = new SelectionCrosshair();
+                Cursor = crosshair.Cursor;
+            }
             catch
             {
+                if (crosshair != null) crosshair.Dispose();
+                if (frame != null) frame.Dispose();
                 instructionFont.Dispose();
                 actionFont.Dispose();
                 throw;
@@ -210,9 +217,9 @@ namespace Capture
             return Point.Empty;
         }
 
-        static Cursor CursorFor(Point handle)
+        Cursor CursorFor(Point handle)
         {
-            if (handle == Point.Empty) return Cursors.Cross;
+            if (handle == Point.Empty) return crosshair.Cursor;
             if (handle.X == 0) return Cursors.SizeNS;
             if (handle.Y == 0) return Cursors.SizeWE;
             return handle.X == handle.Y ? Cursors.SizeNWSE : Cursors.SizeNESW;
@@ -297,6 +304,7 @@ namespace Capture
         {
             if (disposing)
             {
+                if (crosshair != null && IsHandleCreated) Cursor = Cursors.Default;
                 if (frame != null) frame.Dispose();
                 if (desktop != null) desktop.Dispose();
                 if (result != null) result.Dispose();
@@ -304,6 +312,7 @@ namespace Capture
                 actionFont.Dispose();
             }
             base.Dispose(disposing);
+            if (disposing && crosshair != null) crosshair.Dispose();
         }
     }
 
