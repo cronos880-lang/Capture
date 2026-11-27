@@ -162,6 +162,38 @@ namespace Capture
                 (viewport.Height - fitted.Height) / 2f, fitted.Width, fitted.Height);
         }
 
+        public static RectangleF Zoom(RectangleF current, RectangleF minimum, Size image, Size viewport,
+            int margin, Point pointer, double wheelSteps)
+        {
+            float oldScale = current.Width / image.Width;
+            float minScale = minimum.Width / image.Width;
+            const float maxScale = 8f;
+            float scale = (float)Math.Max(minScale,
+                Math.Min(Math.Max(maxScale, oldScale), oldScale * Math.Pow(1.2, wheelSteps)));
+            if (scale <= minScale) return minimum;
+            if (scale == oldScale) return current;
+
+            float x = KeepBetween(pointer.X, current.Left, current.Right);
+            float y = KeepBetween(pointer.Y, current.Top, current.Bottom);
+            float ratio = scale / oldScale;
+            var enlarged = new RectangleF(x - (x - current.Left) * ratio, y - (y - current.Top) * ratio,
+                image.Width * scale, image.Height * scale);
+            return KeepPreviewInBounds(enlarged, viewport, margin);
+        }
+
+        public static RectangleF KeepPreviewInBounds(RectangleF view, Size viewport, int margin)
+        {
+            if (viewport.Width <= margin * 2 || viewport.Height <= margin * 2) return RectangleF.Empty;
+            view.X = KeepBetween(view.X, margin, viewport.Width - margin - view.Width);
+            view.Y = KeepBetween(view.Y, margin, viewport.Height - margin - view.Height);
+            return view;
+        }
+
+        static float KeepBetween(float value, float a, float b)
+        {
+            return Math.Max(Math.Min(a, b), Math.Min(Math.Max(a, b), value));
+        }
+
         public static Rectangle Between(Point a, Point b)
         {
             return Rectangle.FromLTRB(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y),

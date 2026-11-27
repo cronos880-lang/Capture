@@ -59,7 +59,7 @@ namespace Capture
         static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
     }
 
-    sealed class EditorForm : Form
+    sealed class EditorForm : Form, IMessageFilter
     {
         readonly CaptureCanvas canvas = new CaptureCanvas();
         readonly Dictionary<Tool, Button> toolButtons = new Dictionary<Tool, Button>();
@@ -71,10 +71,7 @@ namespace Capture
             AutoEllipsis = true, Dock = DockStyle.Fill, ForeColor = Theme.Muted,
             TextAlign = ContentAlignment.MiddleLeft
         };
-        readonly CheckBox enlargePreview = new CheckBox
-        {
-            Text = "Ampliar vista", AutoSize = true, Dock = DockStyle.Right, ForeColor = Theme.Ink
-        };
+        readonly Button preview = Theme.Button("Ampliar vista");
         readonly Label widthLabel = Theme.Label("Grosor (px)");
         readonly Label headLabel = Theme.Label("Punta (px)");
         readonly Label textSizeLabel = Theme.Label("Texto (px)");
@@ -177,7 +174,9 @@ namespace Capture
             layout.Controls.Add(canvas, 0, 1);
             var footer = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0), Padding = new Padding(2, 2, 8, 0) };
             footer.Controls.Add(status);
-            footer.Controls.Add(enlargePreview);
+            preview.Dock = DockStyle.Right;
+            preview.MinimumSize = new Size(0, 24);
+            footer.Controls.Add(preview);
             layout.Controls.Add(footer, 0, 2);
             Controls.Add(layout);
             toolbar.SizeChanged += delegate { ArrangeToolbar(); };
@@ -187,9 +186,11 @@ namespace Capture
             newCapture.Click += delegate { RequestCapture(); };
             copy.Click += delegate { Export(false); };
             save.Click += delegate { Export(true); };
-            enlargePreview.CheckedChanged += delegate { canvas.EnlargePreview = enlargePreview.Checked; };
+            preview.Click += delegate { canvas.TogglePreview(); };
+            shortcuts.SetToolTip(preview, "Gira la rueda sobre la captura para cambiar el zoom.");
             RefreshState();
             ArrangeToolbar();
+            Application.AddMessageFilter(this);
         }
 
         void AddMeasurement(Label label, NumericUpDown input, Action<AnnotationStyle, int> update)
@@ -238,7 +239,7 @@ namespace Capture
                 var geometry = ToolbarLayout.Arrange(toolbar.ClientSize.Width, 8 * dpi / 96, 5 * dpi / 96, 6 * dpi / 96,
                     tools.PreferredSize, actions.PreferredSize, arrow, text);
                 toolbarRow.Height = geometry.Height + toolbar.Margin.Vertical;
-                statusRow.Height = Math.Max(23 * dpi / 96, enlargePreview.PreferredSize.Height + 3 * dpi / 96);
+                statusRow.Height = Math.Max(23 * dpi / 96, preview.PreferredSize.Height + 3 * dpi / 96);
                 tools.Location = geometry.Tools.Location;
                 actions.Location = geometry.Actions.Location;
                 toolOptions.Bounds = geometry.Options;
@@ -281,9 +282,22 @@ namespace Capture
 
         public void SetCapture(Bitmap bitmap)
         {
-            enlargePreview.Checked = false;
             canvas.SetImage(bitmap);
             canvas.Focus();
+        }
+
+        bool IMessageFilter.PreFilterMessage(ref Message message)
+        {
+            const int mouseWheelMessage = 0x020A;
+            if (message.Msg != mouseWheelMessage || ActiveForm != this || !canvas.Visible || !canvas.IsHandleCreated)
+                return false;
+
+            // WM_MOUSEWHEEL can be sent to the focused toolbar control even when the pointer is over the canvas.
+            long coordinates = message.LParam.ToInt64();
+            var screenPoint = new Point(unchecked((short)coordinates), unchecked((short)(coordinates >> 16)));
+            Point pointer = canvas.PointToClient(screenPoint);
+            return canvas.ClientRectangle.Contains(pointer) &&
+                canvas.ZoomPreview(pointer, unchecked((short)(message.WParam.ToInt64() >> 16)));
         }
 
         public bool ConfirmDiscard()
@@ -344,7 +358,8 @@ namespace Capture
             toolOptions.Visible = style != null;
             toolOptions.ResumeLayout();
             copy.Enabled = save.Enabled = hasImage;
-            enlargePreview.Enabled = hasImage;
+            preview.Enabled = hasImage;
+            preview.Text = canvas.HasAdjustedPreview ? "Restablecer vista" : "Ampliar vista";
             string dimensions = hasImage ? string.Format("{0} × {1} px", canvas.ImageSize.Width, canvas.ImageSize.Height) : "";
             string shapeSize = MeasureShape(selected);
             string usage = canvas.ActiveTool == Tool.Arrow ? "Pulsa donde irá la punta y arrastra para extender el trazo."
@@ -414,7 +429,11 @@ namespace Capture
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) shortcuts.Dispose();
+            if (disposing)
+            {
+                Application.RemoveMessageFilter(this);
+                shortcuts.Dispose();
+            }
             base.Dispose(disposing);
         }
     }

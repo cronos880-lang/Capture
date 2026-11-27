@@ -38,22 +38,13 @@ namespace Capture
         Bitmap image;
         Drag drag;
         bool enlargePreview;
+        RectangleF? zoomedView;
         public Tool ActiveTool { get; private set; }
         public Annotation Selected { get; private set; }
         public bool Modified { get; private set; }
         public bool IsDragging { get { return drag != null; } }
         public bool HasImage { get { return image != null; } }
-        public bool EnlargePreview
-        {
-            get { return enlargePreview; }
-            set
-            {
-                if (enlargePreview == value) return;
-                CancelDrag();
-                enlargePreview = value;
-                Invalidate();
-            }
-        }
+        public bool HasAdjustedPreview { get { return enlargePreview || zoomedView.HasValue; } }
         public Tool StyleTool { get { return Selected == null ? ActiveTool : Selected.Kind; } }
         public AnnotationStyle EditableStyle
         {
@@ -81,6 +72,8 @@ namespace Capture
             ActiveTool = Tool.Select;
             Modified = false;
             drag = null;
+            enlargePreview = false;
+            zoomedView = null;
             Changed();
         }
 
@@ -141,9 +134,37 @@ namespace Capture
             foreach (var annotation in annotations) annotation.Draw(graphics);
         }
 
+        int PreviewMargin { get { return 8 * DeviceDpi / 96; } }
+
         RectangleF View()
         {
-            return Geometry.Fit(image.Size, ClientSize, 8 * DeviceDpi / 96, enlargePreview);
+            return zoomedView.HasValue ? Geometry.KeepPreviewInBounds(zoomedView.Value, ClientSize, PreviewMargin)
+                : Geometry.Fit(image.Size, ClientSize, PreviewMargin, enlargePreview);
+        }
+
+        public void TogglePreview()
+        {
+            if (!HasImage || IsDragging) return;
+            enlargePreview = !HasAdjustedPreview;
+            zoomedView = null;
+            Changed();
+        }
+
+        public bool ZoomPreview(Point pointer, int delta)
+        {
+            if (!HasImage || IsDragging || delta == 0) return false;
+            RectangleF current = View();
+            if (current.IsEmpty) return false;
+            RectangleF minimum = Geometry.Fit(image.Size, ClientSize, PreviewMargin, false);
+            RectangleF next = Geometry.Zoom(current, minimum, image.Size, ClientSize, PreviewMargin,
+                pointer, delta / (double)SystemInformation.MouseWheelScrollDelta);
+            if (next != current)
+            {
+                enlargePreview = false;
+                zoomedView = next == minimum ? (RectangleF?)null : next;
+                Changed();
+            }
+            return true;
         }
 
         Point ImagePoint(Point location, RectangleF view)
@@ -220,7 +241,7 @@ namespace Capture
             using (var pen = new Pen(Theme.Border)) g.DrawRectangle(pen, view.X - 1, view.Y - 1, view.Width + 2, view.Height + 2);
 
             GraphicsState saved = g.Save();
-            g.SetClip(view);
+            g.SetClip(view, CombineMode.Intersect);
             g.TranslateTransform(view.Left, view.Top);
             float ratio = view.Width / image.Width;
             g.ScaleTransform(ratio, ratio);
