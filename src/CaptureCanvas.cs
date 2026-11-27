@@ -37,11 +37,23 @@ namespace Capture
         readonly Font emptyFont = new Font("Segoe UI", 14, FontStyle.Regular, GraphicsUnit.Point);
         Bitmap image;
         Drag drag;
+        bool enlargePreview;
         public Tool ActiveTool { get; private set; }
         public Annotation Selected { get; private set; }
         public bool Modified { get; private set; }
         public bool IsDragging { get { return drag != null; } }
         public bool HasImage { get { return image != null; } }
+        public bool EnlargePreview
+        {
+            get { return enlargePreview; }
+            set
+            {
+                if (enlargePreview == value) return;
+                CancelDrag();
+                enlargePreview = value;
+                Invalidate();
+            }
+        }
         public Tool StyleTool { get { return Selected == null ? ActiveTool : Selected.Kind; } }
         public AnnotationStyle EditableStyle
         {
@@ -131,7 +143,7 @@ namespace Capture
 
         RectangleF View()
         {
-            return Geometry.Fit(image.Size, ClientSize, 8 * DeviceDpi / 96);
+            return Geometry.Fit(image.Size, ClientSize, 8 * DeviceDpi / 96, enlargePreview);
         }
 
         Point ImagePoint(Point location, RectangleF view)

@@ -69,7 +69,11 @@ namespace Capture
         readonly Label status = new Label
         {
             AutoEllipsis = true, Dock = DockStyle.Fill, ForeColor = Theme.Muted,
-            TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(2, 4, 0, 0)
+            TextAlign = ContentAlignment.MiddleLeft
+        };
+        readonly CheckBox enlargePreview = new CheckBox
+        {
+            Text = "Ampliar vista", AutoSize = true, Dock = DockStyle.Right, ForeColor = Theme.Ink
         };
         readonly Label widthLabel = Theme.Label("Grosor (px)");
         readonly Label headLabel = Theme.Label("Punta (px)");
@@ -171,7 +175,10 @@ namespace Capture
 
             layout.Controls.Add(toolbar, 0, 0);
             layout.Controls.Add(canvas, 0, 1);
-            layout.Controls.Add(status, 0, 2);
+            var footer = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0), Padding = new Padding(2, 2, 8, 0) };
+            footer.Controls.Add(status);
+            footer.Controls.Add(enlargePreview);
+            layout.Controls.Add(footer, 0, 2);
             Controls.Add(layout);
             toolbar.SizeChanged += delegate { ArrangeToolbar(); };
             toolbar.DpiChangedAfterParent += delegate { ArrangeToolbar(); };
@@ -180,6 +187,7 @@ namespace Capture
             newCapture.Click += delegate { RequestCapture(); };
             copy.Click += delegate { Export(false); };
             save.Click += delegate { Export(true); };
+            enlargePreview.CheckedChanged += delegate { canvas.EnlargePreview = enlargePreview.Checked; };
             RefreshState();
             ArrangeToolbar();
         }
@@ -230,7 +238,7 @@ namespace Capture
                 var geometry = ToolbarLayout.Arrange(toolbar.ClientSize.Width, 8 * dpi / 96, 5 * dpi / 96, 6 * dpi / 96,
                     tools.PreferredSize, actions.PreferredSize, arrow, text);
                 toolbarRow.Height = geometry.Height + toolbar.Margin.Vertical;
-                statusRow.Height = Math.Max(23 * dpi / 96, status.Font.Height + status.Margin.Vertical);
+                statusRow.Height = Math.Max(23 * dpi / 96, enlargePreview.PreferredSize.Height + 3 * dpi / 96);
                 tools.Location = geometry.Tools.Location;
                 actions.Location = geometry.Actions.Location;
                 toolOptions.Bounds = geometry.Options;
@@ -273,6 +281,7 @@ namespace Capture
 
         public void SetCapture(Bitmap bitmap)
         {
+            enlargePreview.Checked = false;
             canvas.SetImage(bitmap);
             canvas.Focus();
         }
@@ -335,6 +344,7 @@ namespace Capture
             toolOptions.Visible = style != null;
             toolOptions.ResumeLayout();
             copy.Enabled = save.Enabled = hasImage;
+            enlargePreview.Enabled = hasImage;
             string dimensions = hasImage ? string.Format("{0} × {1} px", canvas.ImageSize.Width, canvas.ImageSize.Height) : "";
             string shapeSize = MeasureShape(selected);
             string usage = canvas.ActiveTool == Tool.Arrow ? "Pulsa donde irá la punta y arrastra para extender el trazo."
